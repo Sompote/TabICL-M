@@ -17,13 +17,13 @@ def _table(n=2000, p=8, seed=0):
     return np.random.default_rng(seed).normal(size=(n, p))
 
 
-@pytest.mark.parametrize("mechanism", ["mcar", "mar", "mnar", "block"])
+@pytest.mark.parametrize("mechanism", ["mcar", "mar", "mnar", "block", "block_shift"])
 @pytest.mark.parametrize("rate", [0.1, 0.3, 0.5])
 def test_rate_is_hit(mechanism, rate):
     X = _table()
     mask, _ = abl.inject_missingness(X, mechanism, rate, np.random.default_rng(1))
     assert mask.shape == X.shape
-    tol = 0.08 if mechanism == "block" else 0.03
+    tol = 0.08 if mechanism.startswith("block") else 0.03
     assert abs(mask.mean() - rate) < tol, (mechanism, rate, mask.mean())
     # safety rules
     assert ((~mask).sum(axis=0) >= 2).all()
@@ -89,3 +89,42 @@ def test_score_classification_and_regression():
     assert abs(r["rmse"] - 0.1) < 1e-9 and r["coverage80"] == 1.0
     r2 = abl.score("regression", yr, {"mean": yr}, 0)
     assert np.isnan(r2["coverage80"])
+
+
+def test_source_shift_offsets_numeric_columns_per_source():
+    X = _table(3000, 4)
+    X[:, 3] = np.random.default_rng(0).integers(0, 3, size=3000)  # categorical, must be untouched
+    source = np.repeat(np.arange(3), 1000)
+    Xs = abl.apply_source_shift(X, source, np.random.default_rng(1), shift_scale=1.0, noise_scale=0.0)
+    assert np.array_equal(Xs[:, 3], X[:, 3])
+    delta = Xs[:, :3] - X[:, :3]
+    for k in range(3):  # constant offset within a source, no noise
+        assert np.allclose(delta[source == k], delta[source == k][0])
+    offsets = np.stack([delta[source == k][0] for k in range(3)])
+    assert np.abs(offsets).max() > 0.3, "offsets of order one std"
+    Xn = abl.apply_source_shift(X, source, np.random.default_rng(2), shift_scale=0.0, noise_scale=0.5)
+    assert not np.allclose(Xn[:, 0], X[:, 0]) and np.allclose(Xn[:, :3].mean(axis=0), X[:, :3].mean(axis=0), atol=0.1)
+
+
+def test_split_by_source_is_leave_one_source_out():
+    source = np.array([0, 1, 2, 0, 1, 2, 2])
+    tr, te = abl.split_by_source(source, 2)
+    assert set(te) == {2, 5, 6} and set(tr) == {0, 1, 3, 4}
+    assert not set(tr) & set(te)
+
+
+def test_pattern_normalize_centres_each_source():
+    rng = np.random.default_rng(0)
+    X = rng.normal(size=(300, 3))
+    X[:150, 0] += 4.0  # source A has an offset on column 0
+    X[:150, 2] = np.nan  # and lacks column 2; source B lacks column 1
+    X[150:, 1] = np.nan
+    A, B = abl.pattern_normalize(X[:200], X[200:])
+    Z = np.vstack([A, B])
+    assert np.array_equal(np.isnan(Z), np.isnan(X))
+    assert abs(np.nanmean(Z[:150, 0])) < 1e-6 and abs(np.nanmean(Z[150:, 0])) < 1e-6
+    assert abs(np.nanstd(Z[:150, 0]) - 1) < 1e-6
+    # a rare pattern falls back to pooled statistics and stays finite
+    X[0, 1] = np.nan
+    A, B = abl.pattern_normalize(X[:200], X[200:])
+    assert np.isfinite(A[0, 0])

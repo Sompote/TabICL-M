@@ -29,6 +29,7 @@ from tabicl.prior._genload import LoadPriorDataset, seed_worker
 from tabicl.prior.graph_lib._config import PriorConfig
 from tabicl.prior._missingness import MissingnessConfig
 from tabicl.train._reconstruction import sample_reconstruction_mask, hide_cells
+from tabicl.train._consistency import shift_by_pattern, consistency_loss
 from tabicl.train._optim import get_scheduler
 from tabicl.train._muon import Muon
 from tabicl.train._train_config import build_parser
@@ -237,10 +238,16 @@ class Trainer:
             "recompute": self.config.recompute,
             "col_missing_aware": self.config.col_missing_aware,
             "reconstruction": self.config.recon_weight > 0,
+            "col_group_stats": self.config.col_group_stats,
+            "row_missing_aware": self.config.row_missing_aware,
+            "pattern_token": self.config.pattern_token,
         }
         self.use_reconstruction = self.config.recon_weight > 0
         if self.use_reconstruction and not self.config.col_missing_aware:
             raise ValueError("--recon_weight > 0 requires --col_missing_aware true (hidden cells are fed as NaN).")
+        self.use_consistency = self.config.consistency_weight > 0
+        if self.use_consistency and not self.config.col_missing_aware:
+            raise ValueError("--consistency_weight > 0 requires --col_missing_aware true.")
 
         model = TabICL(**self.model_config)
         model.to(device=self.config.device)
@@ -726,9 +733,26 @@ class Trainer:
         X_in = micro_X
         if self.use_reconstruction:
             recon_mask = sample_reconstruction_mask(
-                micro_X, micro_d, rate_max=self.config.recon_rate_max, p_apply=self.config.recon_p_apply
+                micro_X,
+                micro_d,
+                rate_max=self.config.recon_rate_max,
+                p_apply=self.config.recon_p_apply,
+                mode=self.config.recon_mode,
+                block_rows_max=self.config.recon_block_rows_max,
+                block_cols_max=self.config.recon_block_cols_max,
             )
             X_in = hide_cells(micro_X, recon_mask)
+
+        # Offset consistency: a second view with per-source offset and noise on numeric
+        # features must give the same predictions as the clean view. Only on tables with
+        # gaps (sources are the missingness-pattern groups) and short enough to hold two
+        # graphs in memory.
+        use_consistency = (
+            self.use_consistency
+            and seq_len <= self.config.consistency_max_seq_len
+            and bool(torch.isnan(X_in).any())
+            and float(torch.rand(())) < self.config.consistency_p
+        )
 
         with self.amp_ctx, self._sdpa_ctx():
             if self.regression:
@@ -737,6 +761,7 @@ class Trainer:
                 pred = self.model(X_in, y_train, model_d, return_tokens=self.use_reconstruction)
                 if self.use_reconstruction:
                     pred, tokens = pred
+                pred_raw = pred
                 alphas = torch.linspace(
                     0.0, 1.0, self.config.num_quantiles + 2, device=pred.device, dtype=pred.dtype
                 )[1:-1].view(1, 1, -1)
@@ -746,6 +771,7 @@ class Trainer:
                 pred = self.model(X_in, y_train, model_d, return_tokens=self.use_reconstruction)
                 if self.use_reconstruction:
                     pred, tokens = pred
+                pred_raw = pred
                 pred = pred.flatten(end_dim=-2)  # (B * test_size, max_classes)
                 true = y_test.long().flatten()
                 loss = F.cross_entropy(pred, true)
@@ -755,6 +781,14 @@ class Trainer:
             if self.use_reconstruction:
                 recon_loss = self.raw_model.reconstruction_loss(tokens, micro_X, recon_mask)
                 loss = task_loss + self.config.recon_weight * recon_loss
+            cons_loss = None
+            if use_consistency:
+                X_shift = shift_by_pattern(
+                    X_in, shift_max=self.config.consistency_shift_max, noise_max=self.config.consistency_noise_max
+                )
+                pred_shift = self.model(X_shift, y_train, model_d)
+                cons_loss = consistency_loss(pred_shift, pred_raw, self.regression)
+                loss = loss + self.config.consistency_weight * cons_loss
 
         # Scale loss for gradient accumulation and backpropagate
         scaled_loss = loss / num_micro_batches
@@ -770,6 +804,8 @@ class Trainer:
                 micro_results["accuracy"] = accuracy.item() / num_micro_batches
             if recon_loss is not None:
                 micro_results["recon"] = recon_loss.item() / num_micro_batches
+            if cons_loss is not None:
+                micro_results["consistency"] = cons_loss.item() / num_micro_batches
         return micro_results
 
     def run_batch(self, batch):
@@ -810,6 +846,8 @@ class Trainer:
         results = {"pinball": 0.0} if self.regression else {"ce": 0.0, "accuracy": 0.0}
         if self.use_reconstruction:
             results["recon"] = 0.0
+        if self.use_consistency:
+            results["consistency"] = 0.0
         failed_batches = 0
 
         for idx, micro_batch in enumerate(micro_batches):

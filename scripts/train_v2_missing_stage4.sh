@@ -14,6 +14,17 @@
 #   bash scripts/train_v2_missing_stage4.sh clf     # classifier
 #   bash scripts/train_v2_missing_stage4.sh reg     # regressor
 #
+# ARCH=source_aware adds the source-aware parts (all zero-initialised, so the run still
+# starts exactly at the released model on complete data) and the training regime that
+# targets a held-out source with its own feature subset and measurement offset:
+#   --col_group_stats True       source-relative value encoding in the column embedder
+#   --row_missing_aware True     observed-only row attention
+#   --pattern_token True         pattern read-out token
+#   --recon_mode mixed           block reconstruction (a pseudo-source loses columns)
+#   --consistency_weight 0.1     offset-consistency between a clean and a shifted view
+#   and a prior in which most incomplete tables are block-structured, shifted, and
+#   contain a test-only source.
+#
 # Requirements: pip install "tabicl[pretrain]"  (adds wandb, transformers, xgboost)
 # Hardware: one NVIDIA GPU with >= 24 GB. With --max_seq_len 8192 and --batch_size 32
 # an A100/H100 does roughly 1.5 to 3 steps per second; 3000 steps is about half an
@@ -27,12 +38,28 @@ NUM_GPUS=${NUM_GPUS:-1}
 STEPS=${STEPS:-3000}
 MAX_SEQ_LEN=${MAX_SEQ_LEN:-8192}
 BATCH=${BATCH:-32}
-LR=${LR:-1e-5}
+LR=${LR:-}                                       # default: 1e-5 (baseline) | 5e-5 (source_aware)
 RECON_WEIGHT=${RECON_WEIGHT:-0.1}
 DTYPE=${DTYPE:-float32}                          # float32 | bfloat16 (autocast; bf16 needed without FA3 on 24-32 GB GPUs)
 RECOMPUTE=${RECOMPUTE:-False}                    # activation checkpointing to cut memory
+ARCH=${ARCH:-baseline}                           # baseline | source_aware
+if [ "$ARCH" = "source_aware" ]; then
+    ARCH_ARGS="--col_group_stats True --row_missing_aware True --pattern_token True \
+               --recon_mode ${RECON_MODE:-mixed} --consistency_weight ${CONSISTENCY_WEIGHT:-0.1} \
+               --consistency_p ${CONSISTENCY_P:-0.25} --consistency_max_seq_len ${CONSISTENCY_MAX_SEQ_LEN:-2048}"
+    P_APPLY=${P_APPLY:-0.7}; P_CELL=${P_CELL:-0.4}; P_BLOCK=${P_BLOCK:-0.9}
+    P_CONTIGUOUS=${P_CONTIGUOUS:-0.75}; P_SHIFT=${P_SHIFT:-0.8}; P_NOISE=${P_NOISE:-0.6}
+    LR=${LR:-5e-5}
+elif [ "$ARCH" = "baseline" ]; then
+    ARCH_ARGS=""
+    LR=${LR:-1e-5}
+    P_APPLY=${P_APPLY:-0.6}; P_CELL=${P_CELL:-0.6}; P_BLOCK=${P_BLOCK:-0.6}
+    P_CONTIGUOUS=${P_CONTIGUOUS:-0.25}; P_SHIFT=${P_SHIFT:-0.5}; P_NOISE=${P_NOISE:-0.5}
+else
+    echo "ARCH must be baseline or source_aware"; exit 1
+fi
 N_JOBS=${N_JOBS:-8}                              # CPU workers generating prior tables
-CKPT_ROOT=${CKPT_ROOT:-checkpoints/tabicl-m}
+CKPT_ROOT=${CKPT_ROOT:-checkpoints/tabicl-m}     # source_aware runs default to checkpoints/tabicl-m-sa
 
 # Released Stage 3 checkpoints (auto-downloaded to the Hugging Face cache by the
 # sklearn estimators; or pass RELEASED_CKPT=/path/to/file.ckpt).
@@ -50,6 +77,7 @@ if [ -z "$RELEASED_CKPT" ]; then
     echo "Released checkpoint not found. Run once in Python:  from tabicl import TabICLClassifier; TabICLClassifier()._load_model()"
     echo "or set RELEASED_CKPT=/path/to/$RELEASED_NAME"; exit 1
 fi
+if [ "$ARCH" = "source_aware" ] && [ "$CKPT_ROOT" = "checkpoints/tabicl-m" ]; then CKPT_ROOT=checkpoints/tabicl-m-sa; fi
 CKPT_DIR=$CKPT_ROOT/$TASK
 mkdir -p "$CKPT_DIR"
 
@@ -101,18 +129,19 @@ torchrun --standalone --nproc_per_node=$NUM_GPUS -m tabicl.train \
             --max_n_nodes 32 \
             --cauchy_dag_offset 0.0 \
             --missing_enabled True \
-            --missing_p_apply 0.6 \
-            --missing_p_cell 0.6 \
-            --missing_p_block 0.6 \
+            --missing_p_apply $P_APPLY \
+            --missing_p_cell $P_CELL \
+            --missing_p_block $P_BLOCK \
             --missing_max_sources 8 \
-            --missing_p_contiguous_sources 0.25 \
-            --missing_p_source_shift 0.5 \
-            --missing_p_source_noise 0.5 \
+            --missing_p_contiguous_sources $P_CONTIGUOUS \
+            --missing_p_source_shift $P_SHIFT \
+            --missing_p_source_noise $P_NOISE \
             --missing_p_source_column 0.5 \
             --col_missing_aware True \
             --recon_weight $RECON_WEIGHT \
             --recon_rate_max 0.3 \
             --recon_p_apply 0.5 \
+            $ARCH_ARGS \
             --embed_dim 128 \
             --col_num_blocks 3 \
             --col_nhead 8 \

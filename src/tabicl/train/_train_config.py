@@ -308,6 +308,49 @@ def build_parser():
     parser.add_argument(
         "--recon_p_apply", type=float, default=0.5, help="Probability that a table receives hidden cells"
     )
+    parser.add_argument(
+        "--recon_mode",
+        default="cell",
+        choices=["cell", "block", "mixed"],
+        help="Which cells are hidden for reconstruction: independent cells, a block (a pseudo-source loses a "
+        "subset of columns), or one of the two per table",
+    )
+    parser.add_argument("--recon_block_rows_max", type=float, default=0.5, help="Block mode: max fraction of rows")
+    parser.add_argument("--recon_block_cols_max", type=float, default=0.5, help="Block mode: max fraction of columns")
+    parser.add_argument(
+        "--col_group_stats",
+        default=False,
+        type=str2bool,
+        help="Source-relative value encoding in the column embedder: every observed cell is also fed standardised "
+        "within the rows that share its missingness pattern (zero-initialised). Requires --col_missing_aware.",
+    )
+    parser.add_argument(
+        "--row_missing_aware",
+        default=False,
+        type=str2bool,
+        help="Observed-only row attention: feature tokens whose cells are all missing are excluded from the keys "
+        "of the row-wise interaction. Requires --col_missing_aware.",
+    )
+    parser.add_argument(
+        "--pattern_token",
+        default=False,
+        type=str2bool,
+        help="Pattern read-out token in the row-wise interaction (zero-initialised output). Requires "
+        "--col_missing_aware.",
+    )
+    parser.add_argument(
+        "--consistency_weight",
+        type=float,
+        default=0.0,
+        help="Weight of the offset-consistency loss: predictions on a view with per-source offset and noise on "
+        "numeric features must match the clean view. Requires --col_missing_aware.",
+    )
+    parser.add_argument("--consistency_p", type=float, default=0.25, help="Probability per micro-batch")
+    parser.add_argument("--consistency_shift_max", type=float, default=0.5, help="Max offset, in column std units")
+    parser.add_argument("--consistency_noise_max", type=float, default=0.3, help="Max noise level, in std units")
+    parser.add_argument(
+        "--consistency_max_seq_len", type=int, default=2048, help="Skip the second view on longer tables (memory)"
+    )
     parser.add_argument("--row_num_blocks", type=int, default=3, help="Number of blocks in row interactor")
     parser.add_argument("--row_nhead", type=int, default=8, help="Number of attention heads in row interactor")
     parser.add_argument("--row_num_cls", type=int, default=4, help="Number of CLS tokens in row interactor")

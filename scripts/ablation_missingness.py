@@ -12,11 +12,21 @@ mcar   cells removed independently of the data
 mar    logistic in another observed column, intercept solved for the target rate
 mnar   logistic in the column's own value (self-masking)
 block  rows belong to K sources, each source lacks its own subset of columns
+block_shift
+       as block, and each source also carries an additive offset and extra noise on
+       its numeric features (the per-source measurement effects of the prior)
 
 Models
 ------
 tabicl_impute      released TabICL, NaN mean-imputed by the sklearn wrapper (baseline)
 tabicl_indicator   as above, plus one 0/1 missing-indicator column per incomplete feature
+tabicl_iterimpute  released TabICL, NaN filled by sklearn's IterativeImputer fitted on train
+tabicl_knnimpute   released TabICL, NaN filled by sklearn's KNNImputer fitted on train
+tabicl_patternnorm released TabICL after pattern-conditional normalisation: rows sharing a
+                   missingness pattern are one source, and every column is standardised
+                   within its source (train and test pooled, no labels used); rare patterns
+                   fall back to the pooled statistics. Tests whether the offset of a
+                   held-out source can be removed by preprocessing alone.
 tabicl_aware_zero  released weights inside the missing-aware architecture, new parameters
                    at zero: the architecture change alone, without any training
 tabicl_aware       a checkpoint trained with --col_missing_aware (pass --aware_ckpt)
@@ -36,6 +46,14 @@ Real multi-source table, leave-one-source-out, natural missingness::
     python scripts/ablation_missingness.py --out results/loso \\
         --csv data/compaction.csv --target rho_d_max --task regression \\
         --source_col lab --loso --natural
+
+Splits
+------
+random   stratified random train/test split (default)
+source   with block mechanisms: one whole synthetic source is held out as the test
+         set (leave-one-source-out). The test rows then come from a source whose
+         feature subset and measurement offset were never seen in the context.
+         Other mechanisms fall back to the random split.
 
 Outputs ``results.csv`` (one row per fit), ``summary.csv`` and ``summary.md``
 (mean and standard deviation over seeds), and optional plots.
@@ -116,7 +134,7 @@ def inject_missingness(
             sign = 1.0 if rng.random() < 0.5 else -1.0
             mask[:, j] = _logistic_mask(_standardize(driver.astype(float)), rate, steep, sign, rng)
 
-    elif mechanism == "block":
+    elif mechanism in ("block", "block_shift"):
         K = int(rng.integers(2, 6))
         if source is None:
             source = rng.integers(0, K, size=n)
@@ -144,6 +162,71 @@ def inject_missingness(
         if mask[i].all():
             mask[i, rng.integers(p)] = False
     return mask, source
+
+
+def apply_source_shift(
+    X: np.ndarray,
+    source: np.ndarray,
+    rng: np.random.Generator,
+    shift_scale: float = 0.5,
+    noise_scale: float = 0.3,
+    max_categories: int = 20,
+) -> np.ndarray:
+    """Per-source additive offset and extra noise on numeric features.
+
+    Mirrors the measurement effects of the prior (``tabicl.prior._missingness``):
+    every source draws an offset ``N(0, shift_scale * std_j)`` per numeric feature
+    ``j`` and a noise level ``U(0, noise_scale) * std_j``. Columns with at most
+    ``max_categories`` distinct values are treated as categorical and left alone.
+    """
+    X = X.astype(float).copy()
+    K = int(source.max()) + 1
+    numeric = [j for j in range(X.shape[1]) if len(np.unique(X[:, j])) > max_categories]
+    if not numeric:
+        return X
+    std = np.maximum(X[:, numeric].std(axis=0), 1e-8)
+    offsets = rng.normal(size=(K, len(numeric))) * shift_scale * std
+    X[:, numeric] += offsets[source]
+    if noise_scale > 0:
+        sigma = rng.random((K, 1)) * noise_scale * std
+        X[:, numeric] += rng.normal(size=(len(X), len(numeric))) * sigma[source]
+    return X
+
+
+def split_by_source(source: np.ndarray, held_out: int) -> Tuple[np.ndarray, np.ndarray]:
+    """Train on every source but ``held_out``, test on ``held_out``."""
+    te = np.flatnonzero(source == held_out)
+    tr = np.flatnonzero(source != held_out)
+    return tr, te
+
+
+def pattern_normalize(X_tr: np.ndarray, X_te: np.ndarray, min_rows: int = 8) -> Tuple[np.ndarray, np.ndarray]:
+    """Standardise each column within the rows that share its missingness pattern.
+
+    Train and test rows are pooled (only their features, never labels), so a source
+    that appears only in the test set is centred on its own statistics. Patterns with
+    fewer than ``min_rows`` rows, and columns with fewer than two observed cells in a
+    group, use the pooled statistics of the whole table.
+    """
+    X = np.vstack([X_tr, X_te]).astype(float)
+    pattern = np.isnan(X)
+    keys, inverse, counts = np.unique(pattern, axis=0, return_inverse=True, return_counts=True)
+    inverse = inverse.reshape(-1)
+    g_mean, g_std = np.nanmean(X, axis=0), np.nanstd(X, axis=0)
+    g_mean = np.nan_to_num(g_mean)
+    g_std = np.where(np.isfinite(g_std) & (g_std > 1e-8), g_std, 1.0)
+    out = (X - g_mean) / g_std
+    for k in range(len(keys)):
+        if counts[k] < min_rows:
+            continue
+        rows = inverse == k
+        obs_cols = ~keys[k]
+        sub = X[rows][:, obs_cols]
+        m, sd = np.nanmean(sub, axis=0), np.nanstd(sub, axis=0)
+        ok = (np.sum(~np.isnan(sub), axis=0) >= 2) & np.isfinite(sd) & (sd > 1e-8)
+        cols = np.flatnonzero(obs_cols)[ok]
+        out[np.ix_(rows, cols)] = (sub[:, ok] - m[ok]) / sd[ok]
+    return out[: len(X_tr)], out[len(X_tr) :]
 
 
 def add_indicators(X_tr: np.ndarray, X_te: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
@@ -320,8 +403,23 @@ class ModelZoo:
         """Fit and predict. Returns dict with 'proba' (clf) or 'mean' and optional 'q10','q90' (reg)."""
         if name == "tabicl_indicator":
             X_tr, X_te = add_indicators(X_tr, X_te)
+        elif name == "tabicl_patternnorm":
+            X_tr, X_te = pattern_normalize(X_tr, X_te)
+        elif name in ("tabicl_iterimpute", "tabicl_knnimpute"):
+            from sklearn.experimental import enable_iterative_imputer  # noqa: F401
+            from sklearn.impute import IterativeImputer, KNNImputer
 
-        if name in ("tabicl_impute", "tabicl_indicator", "tabicl_aware", "tabicl_aware_zero"):
+            if name == "tabicl_iterimpute":
+                imp = IterativeImputer(max_iter=10, random_state=seed, keep_empty_features=True)
+            else:
+                imp = KNNImputer(n_neighbors=5, keep_empty_features=True)
+            X_tr = imp.fit_transform(X_tr)
+            X_te = imp.transform(X_te)
+
+        if name in (
+            "tabicl_impute", "tabicl_indicator", "tabicl_patternnorm", "tabicl_iterimpute", "tabicl_knnimpute",
+            "tabicl_aware", "tabicl_aware_zero",
+        ):
             if name == "tabicl_aware":
                 ckpt = self._aware_ckpt(task)
                 if ckpt is None:
@@ -407,16 +505,33 @@ def run_synthetic(args, zoo: ModelZoo, data: dict, rows: List[dict]):
     X, y, task = data["X"], data["y"], data["task"]
     n_classes = len(np.unique(y)) if task == "classification" else 0
     mechanisms = ["none"] + args.mechanisms if args.include_complete else args.mechanisms
+    split = getattr(args, "split", "random")
     for seed in args.seeds:
         rng = np.random.default_rng(seed)
-        tr, te = _split(len(y), args.test_size, rng, y, task)
+        tr_rand, te_rand = _split(len(y), args.test_size, rng, y, task)
         for mech in mechanisms:
             rates = [0.0] if mech == "none" else args.rates
             for rate in rates:
-                mask, _ = inject_missingness(X, "mcar" if mech == "none" else mech, rate, np.random.default_rng(seed * 1000 + int(rate * 100)))
-                Xm = X.astype(float).copy()
+                rng_m = np.random.default_rng(seed * 1000 + int(rate * 100))
+                tr, te, held_out, source = tr_rand, te_rand, None, None
+                Xs = X.astype(float)
+                if mech in ("block", "block_shift"):
+                    K = int(rng_m.integers(2, 6))
+                    source = rng_m.integers(0, K, size=len(y))
+                    if split == "source":
+                        held_out = int(rng_m.integers(K))
+                        tr, te = split_by_source(source, held_out)
+                    if mech == "block_shift":
+                        Xs = apply_source_shift(X, source, rng_m, args.shift_scale, args.noise_scale)
+                mask, _ = inject_missingness(X, "mcar" if mech == "none" else mech, rate, rng_m, source=source)
+                Xm = Xs.copy()
                 Xm[mask] = np.nan
+                if getattr(args, "add_source_col", False) and source is not None:
+                    Xm = np.hstack([Xm, source[:, None].astype(float)])
                 X_tr, X_te, y_tr, y_te = Xm[tr], Xm[te], y[tr], y[te]
+                if task == "classification" and len(np.unique(y_tr)) < 2:
+                    print(f"  ! skipping {data['name']}/{mech}/{rate}/seed{seed}: one class in train", file=sys.stderr)
+                    continue
                 for model in args.models:
                     t0 = time.time()
                     try:
@@ -436,6 +551,8 @@ def run_synthetic(args, zoo: ModelZoo, data: dict, rows: List[dict]):
                             rate=rate,
                             actual_rate=float(mask.mean()),
                             seed=seed,
+                            split=split if mech in ("block", "block_shift") else "random",
+                            held_out_source=held_out,
                             model=model,
                             seconds=time.time() - t0,
                             error=err,
@@ -633,7 +750,18 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--task", default=None, choices=[None, "classification", "regression"], help="Override task")
     p.add_argument("--max_rows", type=int, default=2000, help="Subsample larger datasets to this many rows")
     p.add_argument("--test_size", type=float, default=0.3)
-    p.add_argument("--mechanisms", nargs="+", default=["mcar", "mnar", "block"], choices=["mcar", "mar", "mnar", "block"])
+    p.add_argument(
+        "--mechanisms", nargs="+", default=["mcar", "mnar", "block"], choices=["mcar", "mar", "mnar", "block", "block_shift"]
+    )
+    p.add_argument(
+        "--split",
+        default="random",
+        choices=["random", "source"],
+        help="'source': with block mechanisms hold out one whole synthetic source as the test set",
+    )
+    p.add_argument("--shift_scale", type=float, default=0.5, help="block_shift: per-source offset, in column std units")
+    p.add_argument("--noise_scale", type=float, default=0.3, help="block_shift: upper bound of per-source noise, in std units")
+    p.add_argument("--add_source_col", action="store_true", help="Append the source id as a feature (block mechanisms)")
     p.add_argument("--rates", nargs="+", type=float, default=[0.1, 0.3, 0.5])
     p.add_argument("--seeds", nargs="+", type=int, default=[0, 1, 2])
     p.add_argument("--include_complete", type=lambda s: s.lower() == "true", default=True, help="Also run on complete data")
@@ -641,7 +769,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--models",
         nargs="+",
         default=["tabicl_impute", "tabicl_indicator", "tabicl_aware_zero", "xgboost"],
-        choices=["tabicl_impute", "tabicl_indicator", "tabicl_aware", "tabicl_aware_zero", "xgboost", "catboost", "tabpfn"],
+        choices=[
+            "tabicl_impute", "tabicl_indicator", "tabicl_patternnorm", "tabicl_iterimpute", "tabicl_knnimpute",
+            "tabicl_aware", "tabicl_aware_zero", "xgboost", "catboost", "tabpfn",
+        ],
     )
     p.add_argument("--plain_ckpt", default=None, help="Released classifier checkpoint (default: auto-download)")
     p.add_argument("--plain_ckpt_reg", default=None, help="Released regressor checkpoint (default: auto-download)")

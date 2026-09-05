@@ -132,6 +132,14 @@ class ColEmbedding(nn.Module):
         ``mask_linear`` and the absence vector are initialised at zero, so a model
         with this flag reproduces the original model exactly on complete data.
         If False, ``NaN`` inputs are not supported.
+
+    group_stats : bool, default=False
+        Source-relative value encoding (requires ``missing_aware``). Rows sharing the
+        same missingness pattern are treated as one source. Every observed cell is
+        also fed as ``(x - mean) / std`` computed over the rows of its own pattern
+        group, projected by ``rel_linear`` and added to the input token. Patterns
+        with fewer than 8 rows fall back to table-wide statistics. ``rel_linear`` is
+        zero-initialised, so complete data is embedded exactly as without the flag.
     """
 
     def __init__(
@@ -156,6 +164,7 @@ class ColEmbedding(nn.Module):
         mixed_radix_ensemble: bool = True,
         recompute: bool = False,
         missing_aware: bool = False,
+        group_stats: bool = False,
     ) -> None:
         super().__init__()
         self.embed_dim = embed_dim
@@ -167,6 +176,7 @@ class ColEmbedding(nn.Module):
         self.affine = affine
         self.mixed_radix_ensemble = mixed_radix_ensemble
         self.missing_aware = missing_aware
+        self.group_stats = group_stats
         in_dim = feature_group_size if feature_group else 1
         self.in_linear = SkippableLinear(in_dim, embed_dim)
 
@@ -176,6 +186,13 @@ class ColEmbedding(nn.Module):
             self.mask_linear = nn.Linear(in_dim, embed_dim, bias=False)
             nn.init.zeros_(self.mask_linear.weight)
             self.absence = nn.Parameter(torch.zeros(in_dim, embed_dim))
+
+        if group_stats:
+            if not missing_aware:
+                raise ValueError("group_stats=True requires missing_aware=True")
+            # Projection of the pattern-group-relative value, zero-initialised.
+            self.rel_linear = nn.Linear(in_dim, embed_dim, bias=False)
+            nn.init.zeros_(self.rel_linear.weight)
 
         self.tf_col = SetTransformer(
             num_blocks=num_blocks,
@@ -391,11 +408,95 @@ class ColEmbedding(nn.Module):
         # empty mask, so the attention path is unchanged.
         return features.masked_fill(missing, 0.0), missing
 
-    def _project_inputs(self, features: Tensor, missing: Optional[Tensor]) -> Tensor:
-        """Input projection with the optional missing indicator added."""
+    @staticmethod
+    def pattern_ids(missing_rows: Tensor, min_count: int = 8) -> Tensor:
+        """Integer id of the missingness pattern of every row.
+
+        Parameters
+        ----------
+        missing_rows : Tensor
+            Boolean tensor of shape (B, T, H), True at missing cells.
+
+        min_count : int, default=8
+            Patterns shared by fewer rows than this are mapped to id 0, the "rare"
+            bucket, whose statistics are never used.
+
+        Returns
+        -------
+        Tensor
+            Long tensor of shape (B, T). Frequent patterns get ids starting at 1; rows
+            with the same pattern get the same id.
+        """
+        B, T, H = missing_rows.shape
+        ids = torch.zeros(B, T, dtype=torch.long, device=missing_rows.device)
+        for b in range(B):
+            _, inverse, counts = torch.unique(
+                missing_rows[b].to(torch.int8), dim=0, return_inverse=True, return_counts=True
+            )
+            frequent = counts >= min_count
+            remap = torch.zeros_like(counts)
+            remap[frequent] = torch.arange(1, int(frequent.sum().item()) + 1, device=counts.device)
+            ids[b] = remap[inverse]
+        return ids
+
+    @staticmethod
+    def group_relative_values(X: Tensor, ids: Tensor, eps: float = 1e-6) -> Tensor:
+        """Standardise every observed cell within the rows of its own pattern group.
+
+        Parameters
+        ----------
+        X : Tensor
+            Grouped features of shape (B, T, G, S) with NaN at missing cells.
+
+        ids : Tensor
+            Pattern ids of shape (B, T) from :meth:`pattern_ids`. Rows with id 0 and
+            groups with fewer than two observed cells in a column use the table-wide
+            statistics of that column.
+
+        Returns
+        -------
+        Tensor
+            Tensor of shape (B, T, G, S): ``(x - mean) / std`` at observed cells, 0 at
+            missing cells.
+        """
+        B, T, G, S = X.shape
+        obs = ~torch.isnan(X)
+        x = torch.nan_to_num(X, nan=0.0).float()
+        o = obs.to(x.dtype)
+        P = int(ids.max().item()) + 1
+        onehot = F.one_hot(ids, P).to(x.dtype)  # (B, T, P)
+        cnt = torch.einsum("btp,btgs->bpgs", onehot, o)
+        s1 = torch.einsum("btp,btgs->bpgs", onehot, x * o)
+        s2 = torch.einsum("btp,btgs->bpgs", onehot, x * x * o)
+        cnt_all = o.sum(dim=1, keepdim=True).expand_as(cnt)
+        s1_all = (x * o).sum(dim=1, keepdim=True).expand_as(s1)
+        s2_all = (x * x * o).sum(dim=1, keepdim=True).expand_as(s2)
+        rare = torch.arange(P, device=x.device).view(1, P, 1, 1) == 0
+        use_all = (cnt < 2) | rare
+        cnt = torch.where(use_all, cnt_all, cnt)
+        s1 = torch.where(use_all, s1_all, s1)
+        s2 = torch.where(use_all, s2_all, s2)
+        mean = s1 / cnt.clamp_min(1.0)
+        var = (s2 / cnt.clamp_min(1.0) - mean * mean).clamp_min(0.0)
+        std = torch.sqrt(var + eps)
+        idx = ids.view(B, T, 1, 1).expand(B, T, G, S)
+        rel = (x - torch.gather(mean, 1, idx)) / torch.gather(std, 1, idx)
+        return (rel * o).to(X.dtype)
+
+    def _relative_features(self, X: Tensor) -> Optional[Tensor]:
+        """Group-relative values of the (B, T, H) input, shaped like the grouped features."""
+        if not self.group_stats:
+            return None
+        ids = self.pattern_ids(torch.isnan(X))
+        return self.group_relative_values(self.feature_grouping(X), ids)
+
+    def _project_inputs(self, features: Tensor, missing: Optional[Tensor], rel: Optional[Tensor] = None) -> Tensor:
+        """Input projection with the optional missing indicator and group-relative value added."""
         src = self.in_linear(features)
         if missing is not None:
             src = src + self.mask_linear(missing.to(src.dtype))
+        if rel is not None and self.group_stats:
+            src = src + self.rel_linear(rel.to(src.dtype))
         return src
 
     def _key_padding_mask(
@@ -421,7 +522,12 @@ class ColEmbedding(nn.Module):
         return embeddings + missing.to(embeddings.dtype) @ self.absence.to(embeddings.dtype)
 
     def _compute_embeddings(
-        self, features: Tensor, train_size: int, y_train: Optional[Tensor] = None, embed_with_test: bool = False
+        self,
+        features: Tensor,
+        train_size: int,
+        y_train: Optional[Tensor] = None,
+        embed_with_test: bool = False,
+        rel: Optional[Tensor] = None,
     ) -> Tensor:
         """Feature embedding using a shared set transformer.
 
@@ -453,7 +559,7 @@ class ColEmbedding(nn.Module):
         """
 
         features, missing = self._split_missing(features)
-        src = self._project_inputs(features, missing)  # (..., T, in_dim) -> (..., T, E)
+        src = self._project_inputs(features, missing, rel)  # (..., T, in_dim) -> (..., T, E)
         kpm = self._key_padding_mask(missing, train_size, embed_with_test)
 
         if not self.target_aware:
@@ -552,16 +658,21 @@ class ColEmbedding(nn.Module):
     def _train_forward_with_feature_group(self, X: Tensor, y_train: Tensor, embed_with_test: bool) -> Tensor:
         """Training path when feature grouping is enabled."""
         train_size = y_train.shape[1]
+        rel = self._relative_features(X)
         X = self.feature_grouping(X)  # (B, T, G, group_size)
         if self.reserve_cls_tokens > 0:
             X = F.pad(X, (0, 0, self.reserve_cls_tokens, 0), value=-100.0)
+            if rel is not None:
+                rel = F.pad(rel, (0, 0, self.reserve_cls_tokens, 0), value=0.0)
 
         features = X.transpose(1, 2)  # (B, G+C, T, group_size)
+        if rel is not None:
+            rel = rel.transpose(1, 2)
         if self.target_aware:
             assert y_train is not None, "y_train must be provided when target_aware=True."
             y_train = y_train.unsqueeze(1).expand(-1, features.shape[1], -1)
 
-        embeddings = self._compute_embeddings(features, train_size, y_train, embed_with_test)
+        embeddings = self._compute_embeddings(features, train_size, y_train, embed_with_test, rel=rel)
         return embeddings.transpose(1, 2)  # (B, T, G+C, E)
 
     def _train_forward_without_feature_group(
@@ -569,16 +680,21 @@ class ColEmbedding(nn.Module):
     ) -> Tensor:
         """Training path without feature grouping, supporting variable number of features per table."""
         train_size = y_train.shape[1]
+        rel = self._relative_features(X)  # (B, T, H, 1) or None
 
         if self.reserve_cls_tokens > 0:
             X = F.pad(X, (self.reserve_cls_tokens, 0), value=-100.0)
+            if rel is not None:
+                rel = F.pad(rel, (0, 0, self.reserve_cls_tokens, 0), value=0.0)
+        if rel is not None:
+            rel = rel.transpose(1, 2)  # (B, H+C, T, 1)
 
         if d is None:
             features = X.transpose(1, 2).unsqueeze(-1)  # (B, H+C, T, 1)
             if self.target_aware:
                 assert y_train is not None, "y_train must be provided when target_aware=True."
                 y_train = y_train.unsqueeze(1).expand(-1, features.shape[1], -1)
-            embeddings = self._compute_embeddings(features, train_size, y_train, embed_with_test)
+            embeddings = self._compute_embeddings(features, train_size, y_train, embed_with_test, rel=rel)
         else:
             if self.reserve_cls_tokens > 0:
                 d = d + self.reserve_cls_tokens
@@ -590,6 +706,8 @@ class ColEmbedding(nn.Module):
             indices = torch.arange(HC, device=X.device).unsqueeze(0).expand(B, HC)
             mask = indices < d.unsqueeze(1)  # (B, H+C)
             features = X[mask].unsqueeze(-1)  # (N, T, 1) where N = sum(d)
+            if rel is not None:
+                rel = rel[mask]  # (N, T, 1)
 
             if self.target_aware:
                 assert y_train is not None, "y_train must be provided when target_aware=True."
@@ -597,7 +715,7 @@ class ColEmbedding(nn.Module):
                 y_train = y_train.unsqueeze(1).expand(-1, HC, -1)  # (B, H+C, train_size)
                 y_train = y_train[mask]  # (N, train_size)
 
-            effective_embeddings = self._compute_embeddings(features, train_size, y_train, embed_with_test)
+            effective_embeddings = self._compute_embeddings(features, train_size, y_train, embed_with_test, rel=rel)
 
             # Fill computed embeddings back into full tensor
             embeddings = torch.zeros(B, HC, T, self.embed_dim, device=X.device, dtype=effective_embeddings.dtype)
@@ -670,11 +788,16 @@ class ColEmbedding(nn.Module):
     ) -> Tensor:
         """Inference path when feature grouping is enabled."""
 
+        rel = self._relative_features(X)
         X = self.feature_grouping(X)  # (B, T, G, group_size)
         if self.reserve_cls_tokens > 0:
             X = F.pad(X, (0, 0, self.reserve_cls_tokens, 0), value=-100.0)
+            if rel is not None:
+                rel = F.pad(rel, (0, 0, self.reserve_cls_tokens, 0), value=0.0)
 
         features = X.transpose(1, 2)  # (B, G+C, T, group_size)
+        if rel is not None:
+            rel = rel.transpose(1, 2)
         if self.target_aware:
             assert y_train is not None, "y_train must be provided when target_aware=True."
             y_train = y_train.unsqueeze(1).expand(-1, features.shape[1], -1)
@@ -689,6 +812,7 @@ class ColEmbedding(nn.Module):
                     ("train_size", train_size),
                     ("y_train", y_train),
                     ("embed_with_test", embed_with_test),
+                    ("rel", rel),
                 ]
             ),
         )
@@ -704,8 +828,13 @@ class ColEmbedding(nn.Module):
         """Inference path when feature grouping is disabled."""
 
         if feature_shuffles is None:
+            rel = self._relative_features(X)  # (B, T, H, 1) or None
             if self.reserve_cls_tokens > 0:
                 X = F.pad(X, (self.reserve_cls_tokens, 0), value=-100.0)
+                if rel is not None:
+                    rel = F.pad(rel, (0, 0, self.reserve_cls_tokens, 0), value=0.0)
+            if rel is not None:
+                rel = rel.transpose(1, 2)
 
             features = X.transpose(1, 2).unsqueeze(-1)  # (B, H+C, T, 1)
             if self.target_aware:
@@ -722,6 +851,7 @@ class ColEmbedding(nn.Module):
                         ("train_size", train_size),
                         ("y_train", y_train),
                         ("embed_with_test", embed_with_test),
+                        ("rel", rel),
                     ]
                 ),
             )
@@ -729,8 +859,15 @@ class ColEmbedding(nn.Module):
             # Shuffle optimisation: compute once, reorder for each table
             B = X.shape[0]
             first_table = X[0]
+            rel = self._relative_features(X[:1])  # (1, T, H, 1) or None
+            if rel is not None:
+                rel = rel[0]
             if self.reserve_cls_tokens > 0:
                 first_table = F.pad(first_table, (self.reserve_cls_tokens, 0), value=-100.0)
+                if rel is not None:
+                    rel = F.pad(rel, (0, 0, self.reserve_cls_tokens, 0), value=0.0)
+            if rel is not None:
+                rel = rel.transpose(0, 1)  # (H+C, T, 1)
 
             features = first_table.transpose(0, 1).unsqueeze(-1)  # (H+C, T, 1)
             if self.target_aware:
@@ -747,6 +884,7 @@ class ColEmbedding(nn.Module):
                         ("train_size", train_size),
                         ("y_train", y_first),
                         ("embed_with_test", embed_with_test),
+                        ("rel", rel),
                     ]
                 ),
                 output_repeat=B,
@@ -829,6 +967,7 @@ class ColEmbedding(nn.Module):
         y_train: Optional[Tensor] = None,
         use_cache: bool = False,
         store_cache: bool = True,
+        rel: Optional[Tensor] = None,
     ) -> Tensor:
         """Feature embedding using a shared set transformer with KV caching.
 
@@ -859,7 +998,7 @@ class ColEmbedding(nn.Module):
             Embeddings of shape (..., T, E).
         """
         features, missing = self._split_missing(features)
-        src = self._project_inputs(features, missing)
+        src = self._project_inputs(features, missing, rel)
         # Keys of the first stage are the training rows; the mask only matters when storing.
         kpm = self._key_padding_mask(missing, train_size, embed_with_test=False) if store_cache else None
 
@@ -961,15 +1100,22 @@ class ColEmbedding(nn.Module):
             mgr_config = InferenceConfig().COL_CONFIG
         self.inference_mgr.configure(**mgr_config)
 
+        rel = self._relative_features(X)
         if self.feature_group:
             X = self.feature_grouping(X)  # (B, T, G, group_size)
             if self.reserve_cls_tokens > 0:
                 X = F.pad(X, (0, 0, self.reserve_cls_tokens, 0), value=-100.0)
+                if rel is not None:
+                    rel = F.pad(rel, (0, 0, self.reserve_cls_tokens, 0), value=0.0)
             features = X.transpose(1, 2)  # (B, G+C, T, group_size)
         else:
             if self.reserve_cls_tokens > 0:
                 X = F.pad(X, (self.reserve_cls_tokens, 0), value=-100.0)
+                if rel is not None:
+                    rel = F.pad(rel, (0, 0, self.reserve_cls_tokens, 0), value=0.0)
             features = X.transpose(1, 2).unsqueeze(-1)  # (B, H+C, T, 1)
+        if rel is not None:
+            rel = rel.transpose(1, 2)
 
         if store_cache:
             train_size = y_train.shape[1]
@@ -988,6 +1134,7 @@ class ColEmbedding(nn.Module):
                     ("y_train", y_train),
                     ("use_cache", use_cache),
                     ("store_cache", store_cache),
+                    ("rel", rel),
                 ]
             ),
         )

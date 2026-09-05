@@ -214,11 +214,16 @@ class TabICL(nn.Module):
         recompute: bool = False,
         col_missing_aware: bool = False,
         reconstruction: bool = False,
+        col_group_stats: bool = False,
+        row_missing_aware: bool = False,
+        pattern_token: bool = False,
     ):
         super().__init__()
         icl_dim = embed_dim * row_num_cls  # CLS tokens are concatenated for ICL
         if reconstruction and not col_missing_aware:
             raise ValueError("reconstruction=True requires col_missing_aware=True (hidden cells are fed as NaN).")
+        if (col_group_stats or row_missing_aware or pattern_token) and not col_missing_aware:
+            raise ValueError("col_group_stats, row_missing_aware and pattern_token require col_missing_aware=True.")
 
         # Determine task type
         if max_classes == 0:  # Regression
@@ -256,6 +261,9 @@ class TabICL(nn.Module):
         self.zero_init = zero_init
         self.col_missing_aware = col_missing_aware
         self.reconstruction = reconstruction
+        self.col_group_stats = col_group_stats
+        self.row_missing_aware = row_missing_aware
+        self.pattern_token = pattern_token
 
         self.col_embedder = ColEmbedding(
             embed_dim=embed_dim,
@@ -277,6 +285,7 @@ class TabICL(nn.Module):
             zero_init=zero_init,
             recompute=recompute,
             missing_aware=col_missing_aware,
+            group_stats=col_group_stats,
         )
 
         self.row_interactor = RowInteraction(
@@ -293,6 +302,8 @@ class TabICL(nn.Module):
             bias_free_ln=bias_free_ln,
             zero_init=zero_init,
             recompute=recompute,
+            missing_aware=row_missing_aware,
+            pattern_token=pattern_token,
         )
 
         self.icl_predictor = ICLearning(
@@ -337,7 +348,15 @@ class TabICL(nn.Module):
         """
         missing, unexpected = self.load_state_dict(state_dict, strict=False)
         kept = sorted(
-            k for k in missing if ".mask_linear." in k or k.endswith(".absence") or k.startswith("recon_head.")
+            k
+            for k in missing
+            if ".mask_linear." in k
+            or k.endswith(".absence")
+            or k.startswith("recon_head.")
+            or ".rel_linear." in k
+            or ".pattern_query" in k
+            or ".pattern_attn." in k
+            or ".pattern_out." in k
         )
         other_missing = sorted(set(missing) - set(kept))
         if unexpected or other_missing:
@@ -346,6 +365,15 @@ class TabICL(nn.Module):
                 f"Unexpected keys: {sorted(unexpected)}."
             )
         return kept
+
+    def _absent_groups(self, X: Tensor) -> Optional[Tensor]:
+        """Boolean (B, T, G) mask, True where every cell of a row's feature token is missing."""
+        if not self.row_missing_aware:
+            return None
+        missing = torch.isnan(X)
+        if not missing.any():
+            return None
+        return self.col_embedder.feature_grouping(missing.to(X.dtype)).bool().all(dim=-1)
 
     @property
     def has_cache(self) -> bool:
@@ -438,6 +466,7 @@ class TabICL(nn.Module):
             d = None
 
         # Column-wise embedding -> Row-wise interaction
+        absent = self._absent_groups(X)
         representations = self.row_interactor(
             self.col_embedder(
                 X,
@@ -447,6 +476,7 @@ class TabICL(nn.Module):
             ),
             d=d,
             return_tokens=return_tokens,
+            absent=absent,
         )
         tokens = None
         if return_tokens:
@@ -517,6 +547,7 @@ class TabICL(nn.Module):
             inference_config = InferenceConfig()
 
         # Column-wise embedding -> Row-wise interaction
+        absent = self._absent_groups(X)
         representations = self.row_interactor(
             self.col_embedder(
                 X,
@@ -526,6 +557,7 @@ class TabICL(nn.Module):
                 mgr_config=inference_config.COL_CONFIG,
             ),
             mgr_config=inference_config.ROW_CONFIG,
+            absent=absent,
         )
 
         # Dataset-wise in-context learning
@@ -847,6 +879,7 @@ class TabICL(nn.Module):
             y_train = None
 
         # Column-wise embedding with cache support -> Row-wise interaction
+        absent = self._absent_groups(X)
         representations = self.row_interactor(
             self.col_embedder.forward_with_cache(
                 X,
@@ -857,6 +890,7 @@ class TabICL(nn.Module):
                 mgr_config=inference_config.COL_CONFIG,
             ),
             mgr_config=inference_config.ROW_CONFIG,
+            absent=absent,
         )
 
         # Dataset-wise in-context learning
