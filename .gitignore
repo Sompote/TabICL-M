@@ -145,3 +145,8 @@ papers/
 CLAUDE.md
 ckpts/
 src_private/
+
+# TabICL-M
+checkpoints/
+*.ckpt
+results/*.log
