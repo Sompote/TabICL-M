@@ -719,9 +719,11 @@ class Trainer:
         y_train = micro_y[:, :train_size]
         y_test = micro_y[:, train_size:]
 
-        # Set DDP gradient sync for last micro batch only
+        # Gradients are averaged by hand in run_batch (see _all_reduce_grads), so a
+        # micro-batch skipped on OOM, or a parameter unused in one micro-batch, cannot
+        # leave the DDP reducer waiting for a backward that never comes.
         if self.ddp:
-            self.model.require_backward_grad_sync = micro_batch_idx == num_micro_batches - 1
+            self.model.require_backward_grad_sync = False
 
         # By default (v2), ignore the per-dataset feature count so the model treats all (padded)
         # columns uniformly. This is required for the model's feature grouping and supports
@@ -808,6 +810,25 @@ class Trainer:
                 micro_results["consistency"] = cons_loss.item() / num_micro_batches
         return micro_results
 
+    def _all_reduce_grads(self):
+        """Average the gradients of all trainable parameters across DDP ranks.
+
+        Replaces the DDP reducer (gradient sync is disabled in run_micro_batch): one
+        flat all-reduce over the accumulated gradients after the micro-batch loop.
+        Parameters without a gradient contribute zeros.
+        """
+        import torch.distributed as dist
+
+        params = [p for p in self.raw_model.parameters() if p.requires_grad]
+        for p in params:
+            if p.grad is None:
+                p.grad = torch.zeros_like(p)
+        grads = [p.grad for p in params]
+        flat = torch._utils._flatten_dense_tensors(grads)
+        dist.all_reduce(flat, op=dist.ReduceOp.AVG)
+        for g, synced in zip(grads, torch._utils._unflatten_dense_tensors(flat, grads)):
+            g.copy_(synced)
+
     def run_batch(self, batch):
         """Train the model on a batch of datasets.
 
@@ -869,6 +890,10 @@ class Trainer:
                 f"({failure_ratio:.1%}) of micro-batches failed due to OOM at step {self.curr_step}. "
                 f"Please check configuration to reduce memory consumption."
             )
+
+        # Average the accumulated gradients across ranks
+        if self.ddp and self.ddp_world_size > 1:
+            self._all_reduce_grads()
 
         # Clip the gradient
         if self.config.gradient_clipping > 0:
