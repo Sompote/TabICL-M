@@ -383,8 +383,12 @@ class ColEmbedding(nn.Module):
         if not self.missing_aware:
             return features, None
         missing = torch.isnan(features)
-        if not missing.any():
+        if not missing.any() and not self.training:
             return features, None
+        # In training the all-False mask is kept so that mask_linear and the absence
+        # vector always take part in autograd (they add exact zeros); otherwise DDP
+        # reports them as unused on complete tables. The key padding mask drops an
+        # empty mask, so the attention path is unchanged.
         return features.masked_fill(missing, 0.0), missing
 
     def _project_inputs(self, features: Tensor, missing: Optional[Tensor]) -> Tensor:

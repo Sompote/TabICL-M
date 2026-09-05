@@ -29,6 +29,8 @@ MAX_SEQ_LEN=${MAX_SEQ_LEN:-8192}
 BATCH=${BATCH:-32}
 LR=${LR:-1e-5}
 RECON_WEIGHT=${RECON_WEIGHT:-0.1}
+DTYPE=${DTYPE:-float32}                          # float32 | bfloat16 (autocast; bf16 needed without FA3 on 24-32 GB GPUs)
+RECOMPUTE=${RECOMPUTE:-False}                    # activation checkpointing to cut memory
 N_JOBS=${N_JOBS:-8}                              # CPU workers generating prior tables
 CKPT_ROOT=${CKPT_ROOT:-checkpoints/tabicl-m}
 
@@ -43,7 +45,7 @@ elif [ "$TASK" = "reg" ]; then
 else
     echo "usage: $0 clf|reg"; exit 1
 fi
-RELEASED_CKPT=${RELEASED_CKPT:-$(ls ~/.cache/huggingface/hub/models--jingang--TabICL/snapshots/*/$RELEASED_NAME 2>/dev/null | head -1)}
+RELEASED_CKPT=${RELEASED_CKPT:-$(ls "${HF_HOME:-$HOME/.cache/huggingface}"/hub/models--jingang--TabICL/snapshots/*/$RELEASED_NAME 2>/dev/null | head -1)}
 if [ -z "$RELEASED_CKPT" ]; then
     echo "Released checkpoint not found. Run once in Python:  from tabicl import TabICLClassifier; TabICLClassifier()._load_model()"
     echo "or set RELEASED_CKPT=/path/to/$RELEASED_NAME"; exit 1
@@ -63,7 +65,7 @@ torchrun --standalone --nproc_per_node=$NUM_GPUS -m tabicl.train \
             --wandb_project TabICL-M \
             --wandb_name tabicl_m_${TASK}_stage4 \
             --device cuda \
-            --dtype float32 \
+            --dtype $DTYPE \
             $TASK_ARGS \
             --max_steps $STEPS \
             --batch_size $BATCH \
@@ -133,7 +135,7 @@ torchrun --standalone --nproc_per_node=$NUM_GPUS -m tabicl.train \
             --norm_first True \
             --zero_init False \
             --use_flash_attn3 False \
-            --recompute False \
+            --recompute $RECOMPUTE \
             --checkpoint_dir $CKPT_DIR \
             $RESUME_ARGS \
             --save_temp_every 50 \

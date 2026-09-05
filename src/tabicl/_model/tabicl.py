@@ -385,7 +385,8 @@ class TabICL(nn.Module):
         mask = grouping(recon_mask.to(X_target.dtype)) > 0.5  # (B, T, G, S)
         mask = mask & ~torch.isnan(target)
         if not mask.any():
-            return tokens.new_zeros(())
+            # Zero loss that still depends on the head so DDP never sees it as unused.
+            return sum(p.sum() for p in self.recon_head.parameters()).to(tokens.dtype) * 0.0
         pred = self.recon_head(tokens).to(target.dtype)  # (B, T, G, S)
         return F.smooth_l1_loss(pred[mask], target[mask])
 
