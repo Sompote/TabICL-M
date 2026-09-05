@@ -1,0 +1,50 @@
+{
+  "out": "results/ablation_m/builtin",
+  "datasets": [
+    "breast_cancer",
+    "wine",
+    "diabetes"
+  ],
+  "target": null,
+  "source_col": null,
+  "task": null,
+  "max_rows": 2000,
+  "test_size": 0.3,
+  "mechanisms": [
+    "mcar",
+    "mar",
+    "mnar",
+    "block"
+  ],
+  "rates": [
+    0.1,
+    0.3,
+    0.5
+  ],
+  "seeds": [
+    0,
+    1,
+    2
+  ],
+  "include_complete": true,
+  "models": [
+    "tabicl_impute",
+    "tabicl_indicator",
+    "tabicl_aware_zero",
+    "tabicl_aware",
+    "xgboost",
+    "catboost"
+  ],
+  "plain_ckpt": null,
+  "plain_ckpt_reg": null,
+  "aware_ckpt": "checkpoints/tabicl-m/clf/step-3000.ckpt",
+  "aware_ckpt_reg": "checkpoints/tabicl-m/reg/step-3000.ckpt",
+  "n_estimators": 8,
+  "device": "cuda",
+  "loso": false,
+  "natural": false,
+  "min_source_rows": 20,
+  "plot": true,
+  "resummarize": false,
+  "no_isolation": false
+}
