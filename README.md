@@ -10,10 +10,13 @@ This repository is a fork of TabICL by Qu, Holzmüller, Varoquaux and Le Morvan.
 All of TabICLv2 is still here and works unchanged. TabICL-M adds three parts on top,
 each behind a flag, so each can be switched off for ablation.
 
-**Status.** Research code. The three parts are implemented and tested. The
-missing-aware model has not been pre-trained yet, so there is no TabICL-M checkpoint
-to download. The evaluation so far compares the released TabICLv2 weights under
-injected missingness. See [Results so far](#results-so-far) and
+**Status.** Research code. The three parts are implemented and tested, and the
+first stage-4 run is done: the classifier and the regressor were each trained for
+3000 steps from the released TabICLv2 weights on one GPU. The checkpoints are in
+this repository under `checkpoints/tabicl-m/<task>/step-3000.ckpt` (git LFS, run
+`git lfs pull`). On complete data they reproduce TabICLv2 exactly. Under injected
+missingness they tie the mean-imputation baseline within seed noise, and both beat
+XGBoost and CatBoost. See [Results so far](#results-so-far) and
 [What remains](#what-remains).
 
 **Workflow in three commands.** Install, run continued pre-training on one GPU,
@@ -136,14 +139,16 @@ SHAP work as in upstream TabICL. See [Inherited features](#inherited-features).
 |---|---|---|---|---|
 | TabICLv2, released | mean-imputed | own category | include imputed values | no |
 | TabICLv2 + indicator columns | mean-imputed | own category | include imputed values | no |
-| TabICL-M, `col_missing_aware` | kept as NaN | kept as NaN | observed cells only | yes, after stage 4 |
+| TabICL-M, `col_missing_aware` | kept as NaN | kept as NaN | observed cells only | yes |
 
 ## Continued pre-training (stage 4)
 
 TabICL-M is trained by continuing from the released TabICLv2 weights with the
 three parts switched on. The new parameters are zero at step 0, so the run starts
-exactly at the released model on complete data. One GPU with 24 GB is enough for
-the default settings.
+exactly at the released model on complete data. One GPU with 32 GB is enough for
+the default settings with `DTYPE=bfloat16`; in float32 the attention falls back to
+memory-hungry kernels when FlashAttention-3 is not available and runs out of memory
+at `--max_seq_len 8192`.
 
 ```bash
 pip install -e ".[pretrain]"
@@ -162,10 +167,22 @@ The script copies the stage-3 recipe of TabICLv2 and adds:
 ```
 
 Environment variables override the defaults, for example `STEPS=6000 BATCH=64
-NUM_GPUS=4 RECON_WEIGHT=0.05`. The trainer logs the task loss and the
+NUM_GPUS=4 RECON_WEIGHT=0.05 DTYPE=bfloat16 RECOMPUTE=True`. The trainer logs the task loss and the
 reconstruction loss separately. The task loss should stay near its starting value.
 The reconstruction loss should fall. Checkpoints are written to
 `checkpoints/tabicl-m/<task>/step-*.ckpt` and load directly into the estimators.
+
+The run that produced the committed checkpoints (`checkpoints/tabicl-m/run_stage4.sh`,
+one RTX 5090, bfloat16, 3000 steps, batch 32, `--max_seq_len 8192`, 2 h 20 min per
+task) behaved as intended. Averaged over 250-step windows:
+
+| Task | Task loss, steps 0 to 249 | Task loss, steps 2750 to 2999 | Reconstruction, first window | Reconstruction, last window |
+|---|---|---|---|---|
+| classifier | cross-entropy 0.82 (accuracy 0.73) | 0.55 (0.78) | 0.24 | 0.19 |
+| regressor | pinball 0.084 | 0.080 | 0.24 | 0.20 |
+
+The classifier's task loss falls at first because the released model has never seen
+tables with gaps; the regressor's stays flat. The reconstruction loss falls in both.
 
 All `--missing_*` options are listed by `python -m tabicl.train --help`. The
 same options apply to `python -m tabicl.prior` when tables are pre-generated to
@@ -213,41 +230,105 @@ from a saved results file.
 
 ### Results so far
 
-Released TabICLv2 weights only, before any stage-4 training. Three datasets, three
-mechanisms, three rates, three seeds, 360 fits. Diabetes regression, RMSE, mean
-over seeds:
+**Before training** (`results/ablation_v2/`), the released TabICLv2 weights inside
+the three TabICL paths did not differ, as expected with the new parameters at zero.
+That established that the architecture change does not hurt and that the baseline
+is strong: mean imputation inside an in-context learner already absorbs most of the
+damage.
 
-| Mechanism | Rate | `tabicl_impute` | `tabicl_indicator` | `tabicl_aware_zero` | `xgboost` |
+**After stage 4** (`results/ablation_m/`, `results/ablation_m/run.sh`): six
+datasets, four mechanisms, three rates, three seeds, six models, 1404 fits. The
+three built-in datasets are those of the first evaluation. The three OpenML
+datasets were added because the built-in classification sets sit at AUC 0.98 to
+1.00 and cannot separate the models: `credit-g` (31), `adult` (1590, subsampled to
+3000 rows), and Boston housing (531). `tabicl_aware` is the committed step-3000
+checkpoint. Mean over seeds at the highest deletion rate:
+
+`adult`, AUC (2100 training rows, 14 features):
+
+| Mechanism | Rate | `tabicl_impute` | `tabicl_indicator` | `tabicl_aware_zero` | `tabicl_aware` | `xgboost` | `catboost` |
+|---|---|---|---|---|---|---|---|
+| complete | 0.0 | 0.912 | 0.911 | 0.912 | 0.912 | 0.897 | 0.896 |
+| mcar | 0.5 | 0.858 | 0.856 | 0.857 | 0.857 | 0.841 | 0.836 |
+| mar | 0.5 | 0.850 | 0.848 | 0.849 | 0.849 | 0.837 | 0.839 |
+| mnar | 0.5 | 0.859 | 0.855 | 0.858 | 0.859 | 0.838 | 0.839 |
+| block | 0.5 | 0.860 | 0.856 | 0.862 | 0.865 | 0.849 | 0.855 |
+
+`credit-g`, AUC (700 training rows, 20 features):
+
+| Mechanism | Rate | `tabicl_impute` | `tabicl_indicator` | `tabicl_aware_zero` | `tabicl_aware` | `xgboost` | `catboost` |
+|---|---|---|---|---|---|---|---|
+| complete | 0.0 | 0.828 | 0.828 | 0.828 | 0.828 | 0.801 | 0.807 |
+| mcar | 0.5 | 0.696 | 0.689 | 0.696 | 0.701 | 0.674 | 0.664 |
+| mar | 0.5 | 0.725 | 0.721 | 0.727 | 0.724 | 0.679 | 0.664 |
+| mnar | 0.5 | 0.760 | 0.758 | 0.758 | 0.759 | 0.728 | 0.707 |
+| block | 0.5 | 0.729 | 0.729 | 0.728 | 0.729 | 0.691 | 0.692 |
+
+Boston housing, RMSE (354 training rows, 13 features):
+
+| Mechanism | Rate | `tabicl_impute` | `tabicl_indicator` | `tabicl_aware_zero` | `tabicl_aware` | `xgboost` | `catboost` |
+|---|---|---|---|---|---|---|---|
+| complete | 0.0 | 3.01 | 3.01 | 3.01 | 3.02 | 3.34 | 2.99 |
+| mcar | 0.5 | 5.90 | 5.88 | 5.83 | 5.68 | 6.04 | 6.17 |
+| mar | 0.5 | 4.97 | 5.09 | 5.11 | 4.89 | 5.71 | 5.39 |
+| mnar | 0.5 | 5.08 | 5.09 | 5.04 | 4.98 | 5.09 | 5.16 |
+| block | 0.5 | 4.79 | 4.80 | 4.80 | 4.80 | 4.89 | 4.67 |
+
+Diabetes, RMSE:
+
+| Mechanism | Rate | `tabicl_impute` | `tabicl_indicator` | `tabicl_aware_zero` | `tabicl_aware` | `xgboost` | `catboost` |
+|---|---|---|---|---|---|---|---|
+| complete | 0.0 | 56.6 | 56.6 | 56.6 | 56.7 | 62.1 | 59.7 |
+| mcar | 0.5 | 65.6 | 65.5 | 65.5 | 65.1 | 69.9 | 69.8 |
+| mar | 0.5 | 61.5 | 61.9 | 62.7 | 61.6 | 67.4 | 63.4 |
+| mnar | 0.5 | 62.7 | 62.2 | 63.4 | 62.6 | 71.0 | 67.6 |
+| block | 0.5 | 63.6 | 63.6 | 63.4 | 63.2 | 69.7 | 66.1 |
+
+Paired over all 39 conditions per dataset (same seed, same deleted cells):
+
+| Dataset | Metric | wins / losses vs `tabicl_impute` | mean gain (higher AUC, lower RMSE) | wins / losses vs `xgboost` | mean gain |
 |---|---|---|---|---|---|
-| complete | 0.0 | 56.6 | 56.6 | 56.6 | 62.1 |
-| MCAR | 0.3 | 61.9 | 61.8 | 62.0 | 67.5 |
-| MCAR | 0.5 | 65.6 | 65.5 | 65.5 | 69.9 |
-| MNAR | 0.5 | 62.6 | 62.2 | 63.3 | 71.0 |
-| block | 0.5 | 63.8 | 63.6 | 63.5 | 69.7 |
+| breast_cancer | AUC | 28 / 10 | +0.0004 AUC | 29 / 9 | +0.003 AUC |
+| wine | AUC | 12 / 8 | +0.0004 AUC | 30 / 2 | +0.010 AUC |
+| credit-g | AUC | 21 / 18 | +0.0003 AUC | 35 / 4 | +0.034 AUC |
+| adult | AUC | 15 / 24 | -0.0006 AUC | 38 / 1 | +0.016 AUC |
+| diabetes | RMSE | 28 / 11 | +0.21 RMSE | 39 / 0 | +5.70 RMSE |
+| Boston | RMSE | 25 / 14 | +0.07 RMSE | 30 / 9 | +0.31 RMSE |
 
-The seed spread is 1 to 3 RMSE units, so the three TabICL variants do not differ.
-This is the expected result before training: the new parameters are zero. It
-establishes two facts. The architecture change does not hurt. And the baseline is
-strong: mean imputation inside an in-context learner already absorbs most of the
-damage, with the 80 % interval widening from 1.75 to 2.09 target standard
-deviations as the deletion rate rises to 0.5 and coverage staying between 0.77 and
-0.81. Whether TabICL-M improves on this is decided by the stage-4 run and the
-leave-one-source-out test. Full tables: `results/ablation_v2/summary.md`.
+Three things follow.
+
+1. **Training did not hurt.** On complete data the trained model matches the
+   released model within 0.001 AUC and 0.01 RMSE on every dataset.
+2. **TabICL-M ties mean imputation.** It wins about 60 % of the paired comparisons
+   against `tabicl_impute`, but the mean gain is inside the seed spread everywhere.
+   The only consistent edge is regression under MAR and MCAR on Boston housing
+   (RMSE 4.89 against 4.97 and 5.68 against 5.90 at rate 0.5). The trained
+   parameters do something, since `tabicl_aware` also edges out `tabicl_aware_zero`,
+   but not much on these tables. This is the fallback outcome stated below:
+   TabICLv2 with mean imputation is already robust to random gaps.
+3. **Both TabICL paths beat the tree baselines with native NaN handling** on five
+   of the six datasets, by 0.016 AUC on `adult`, 0.034 to 0.038 AUC on `credit-g`
+   (39 wins, 0 losses against CatBoost on both), and 3.6 to 5.7 RMSE on diabetes.
+   The exception is Boston housing under block missingness, where CatBoost is
+   slightly ahead.
+
+The block mechanism here removes column blocks per source but injects no per-source
+offset or noise, and the split is random, not by source. That is the mild version of
+the case TabICL-M is built for. Full tables and plots:
+`results/ablation_m/builtin/summary.md`, `results/ablation_m/openml/summary.md`.
 
 ## What remains
 
-1. **Stage-4 training.** Run `scripts/train_v2_missing_stage4.sh` for the
-   classifier and the regressor on a GPU. Check that the task loss stays flat and
-   the reconstruction loss falls.
-2. **Trained ablation.** Rerun the evaluation with `--aware_ckpt` and
-   `--aware_ckpt_reg`, on harder datasets than the built-in ones, and with
-   per-source offset and noise injected in the block mechanism. The built-in
-   classification sets sit at AUC 0.98 to 1.00 and cannot separate the models.
-3. **Leave-one-source-out on real data.** The compaction database with its
+1. **Block missingness with source shift.** Rerun the evaluation with per-source
+   offset and noise injected in the block mechanism, and with splits by source.
+   The random-split block case above does not exercise the source-structured prior.
+2. **Leave-one-source-out on real data.** The compaction database with its
    provenance groups is the target case. Random splits overstate the result,
    because the model can learn the source instead of the physics.
-4. **Ablate each part.** Each flag can be switched off. A part that adds nothing
+3. **Ablate each part.** Each flag can be switched off. A part that adds nothing
    is dropped from the claim.
+4. **A longer run.** 3000 steps at learning rate 1e-5 is a short continuation.
+   The reconstruction loss was still falling at the end.
 
 If the trained model does not beat mean imputation on the block case with source
 shift, the honest result is that TabICLv2 is already robust to missing cells.
@@ -265,6 +346,9 @@ src/tabicl/train/_run.py              joint loss in the trainer
 src/tabicl/_sklearn/                  NaN pass-through when the model is missing-aware
 scripts/train_v2_missing_stage4.sh    continued pre-training recipe
 scripts/ablation_missingness.py       evaluation runner
+checkpoints/tabicl-m/                 stage-4 checkpoints (git LFS) and the launcher that produced them
+results/ablation_v2/                  evaluation of the released weights before stage 4
+results/ablation_m/                   evaluation of the trained checkpoints, with the runner script
 tests/test_prior_missingness.py       tests for each part (62 in total)
 tests/test_missing_aware_embedding.py
 tests/test_reconstruction_head.py
