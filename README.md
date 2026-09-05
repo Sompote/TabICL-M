@@ -1,427 +1,325 @@
-[![test](https://github.com/soda-inria/tabicl/actions/workflows/testing.yml/badge.svg)](https://github.com/soda-inria/tabicl/actions/workflows/testing.yml)
-[![PyPI version](https://badge.fury.io/py/tabicl.svg)](https://badge.fury.io/py/tabicl)
-[![Downloads](https://img.shields.io/pypi/dm/tabicl)](https://pypistats.org/packages/tabicl)
+# TabICL-M: a tabular foundation model for incomplete tables
 
-# TabICLv2: An open tabular foundation model
+TabICL-M (M for missingness) extends [TabICLv2](https://github.com/soda-inria/tabicl)
+so that it learns from tables in which not every row has every feature. It targets
+the case that is common in engineering databases: the table is a merge of several
+sources, and each source measured its own subset of the features. That is
+block-structured missingness, not random gaps.
 
-This repository is the official implementation of **TabICLv2** ([ICML 2026](https://arxiv.org/abs/2602.11139)) 
-and **TabICL** ([ICML 2025](https://arxiv.org/abs/2502.05564)).
+This repository is a fork of TabICL by Qu, Holzmüller, Varoquaux and Le Morvan.
+All of TabICLv2 is still here and works unchanged. TabICL-M adds three parts on top,
+each behind a flag, so each can be switched off for ablation.
 
-**Strong performance without hyperparameter tuning:** 
-TabICLv2 is a competitive model for tabular classification and regression 
-on the [TabArena](https://tabarena.ai) and [TALENT](https://arxiv.org/abs/2407.00956) benchmarks. 
-It does not require hyperparameter tuning 
-and outperforms heavily tuned XGBoost, CatBoost, or LightGBM on TabArena on ~80% of datasets.
+**Status.** Research code. The three parts are implemented and tested. The
+missing-aware model has not been pre-trained yet, so there is no TabICL-M checkpoint
+to download. The evaluation so far compares the released TabICLv2 weights under
+injected missingness. See [Results so far](#results-so-far) and
+[What remains](#what-remains).
 
-**Easy to use:** TabICL is pip-installable and scikit-learn compliant. 
-It is also **open source** (including [pre-training](#pre-training)), 
-with a permissive license.
+**Workflow in three commands.** Install, run continued pre-training on one GPU,
+evaluate against the baselines:
 
-**Speed:** TabICL performs `fit` and `predict` jointly via a single 
-forward pass through a pre-trained transformer model. 
-For larger datasets, we recommend a GPU.
-On an H100 GPU, TabIClv2 can `fit` and `predict` a dataset 
-with 50,000 samples and 100 features in under 10 seconds, 
-which is 10x faster than TabPFN-2.5.
-Through KV caching, TabICL supports faster repeated inference on the same training data.
+```bash
+pip install -e ".[pretrain]"
+bash scripts/train_v2_missing_stage4.sh clf          # and: reg
+python scripts/ablation_missingness.py --out results/ablation \
+    --aware_ckpt checkpoints/tabicl-m/clf/step-3000.ckpt --plot
+```
 
-**Scalability:** TabICL shows excellent performance on benchmarks 
-with 300 to 100,000 training samples and up to 2,000 features. 
-It can scale to even larger datasets (e.g., 500K samples) through CPU and disk offloading, 
-though its accuracy may degrade at some point.
+## What is new
 
-<img src="./docs/figures/pareto_front_improvability_tabarena.png" width="70%" alt="Model comparison on TabArena" style="display: block; margin: auto;">
+![TabICL-M architecture: the three stages of TabICLv2 with the missing-aware column embedding and the reconstruction head added](./docs/figures/missingness_prior/architecture.svg)
+
+*The three stages of TabICLv2 with the TabICL-M additions in green. The full
+description of the architecture, the training objective, and every revised file
+with its size is in [docs/tabicl_m_architecture.md](./docs/tabicl_m_architecture.md).*
+
+![How a complete synthetic table becomes an incomplete one](./docs/figures/missingness_prior/mechanism.svg)
+
+*How the prior turns a complete synthetic table into an incomplete one: block
+masking by source on the left, cell-wise masking on the right, then the union,
+the safety rules, and the optional source-id column.*
+
+**1. A block-structured missingness prior.** The synthetic tables used for
+pre-training are split into 2 to 8 sources. Each source observes its own subset of
+features, with an optional core set seen by all. Sources can carry an additive
+offset and extra noise on numeric features, and the source id can be appended as a
+categorical column. Cell-wise gaps under MCAR, MAR, and MNAR mechanisms, including
+detection-limit censoring, are layered on top. Every mechanism hits a sampled target
+rate. The target is never masked. Code: `src/tabicl/prior/_missingness.py`.
+
+**2. An observed-only column embedding with a learned absence vector.** TabICL
+embeds each column with a set transformer over its rows. In TabICL-M, missing
+cells are hidden from the keys of the inducing-point attention, so the column
+statistics come from observed cells only. A missing indicator is projected into the
+input token and a learned absence vector is added to the output embedding. Both new
+parameters start at zero, so on complete data the model reproduces TabICLv2
+exactly. Flag: `col_missing_aware`. Code: `src/tabicl/_model/embedding.py`.
+
+**3. A joint prediction and reconstruction objective.** During pre-training a
+fraction of the observed cells is hidden. The model predicts the target as usual and
+reconstructs the hidden cells from the per-feature outputs of the row-wise
+interaction through a small head. The head is dropped at inference. Flag:
+`reconstruction`, trainer option `--recon_weight`. Code:
+`src/tabicl/train/_reconstruction.py`.
+
+### What is not new
+
+Three ideas close to this work are published and are not claimed here.
+[TabPFN v2](https://www.nature.com/articles/s41586-024-08328-6) injects cell-wise
+missingness into its prior and adds a missing indicator to its encoder.
+[NAIM](https://arxiv.org/abs/2407.11540) masks missing features out of attention
+instead of imputing. [ReMasker](https://arxiv.org/abs/2309.13793) and
+[VIME](https://arxiv.org/abs/2006.06731) train tabular models with masked-cell
+reconstruction. All three treat missingness as cell-wise and random. None is an
+in-context learner. The contribution of TabICL-M is the source-structured prior,
+the column-level masking inside an inducing-point set transformer, and the joint
+objective inside a tabular in-context learner.
 
 ## Installation
 
 ```bash
-pip install tabicl
+git clone https://github.com/Sompote/tabicl-m.git && cd tabicl-m
+pip install -e .
 ```
 
-Optional dependencies can be installed as needed:
-```bash
-pip install tabicl[forecast]   # time series forecasting
-pip install tabicl[shap]       # SHAP-based explainability
-pip install tabicl[finetune]   # fine-tuning on a single dataset
-pip install tabicl[pretrain]   # pre-training
-pip install tabicl[all]        # everything
-```
+The distribution is named `tabicl-m`, so it does not collide with the upstream
+`tabicl` package on PyPI. The import name stays `tabicl`, so upstream code, the
+released checkpoints, and the tutorials work unchanged. Do not install both in the
+same environment.
 
-On Intel Macs, installing PyTorch via `pip` may fail. In that case, install it first with:
+Optional dependencies:
+
 ```bash
-conda install pytorch -c pytorch
+pip install -e ".[pretrain]"   # continued pre-training (wandb, transformers, xgboost)
+pip install -e ".[finetune]"   # fine-tuning on a single dataset
+pip install -e ".[forecast]"   # time series forecasting
+pip install -e ".[shap]"       # SHAP explanations
+pip install -e ".[all]"
 ```
-Then install `tabicl` as above.
 
 ## Basic usage
+
+The estimators are scikit-learn compatible. With the released TabICLv2 checkpoint,
+missing numeric values are mean-imputed and missing categories get their own code,
+exactly as in upstream TabICL.
 
 ```python
 from tabicl import TabICLClassifier, TabICLRegressor
 
-clf = TabICLClassifier()
-clf.fit(X_train, y_train)  # downloads checkpoint on first use, otherwise cheap
-clf.predict(X_test)  # in-context learning happens here
+clf = TabICLClassifier()          # downloads the TabICLv2 checkpoint on first use
+clf.fit(X_train, y_train)
+clf.predict(X_test)               # in-context learning happens here
 
 reg = TabICLRegressor()
 reg.fit(X_train, y_train)
 reg.predict(X_test)
 ```
 
-To speed up repeated inference on the same training data, enable KV caching. The cache is built during `fit` and reused across `predict` calls. Note that this consumes additional memory to store the cached projections, so consider the trade-off for your use case:
+With a checkpoint trained with `col_missing_aware=True`, the same estimators pass
+NaN straight through to the model. No imputation is applied, in numeric or
+categorical columns. Nothing changes in the calling code:
 
 ```python
-clf = TabICLClassifier(kv_cache=True)
-clf.fit(X_train, y_train)  # caches key-value projections for training data
-clf.predict(X_test)  # fast: only processes test data by reusing the cached context
-```
-
-Save and load a fitted classifier or regressor:
-
-```python
-clf.save(
-    "classifier.pkl",
-    save_model_weights=False,  # if False, reload from checkpoint on load
-    save_training_data=True,   # if True, include training data; if False, discard it (requires KV cache)
-    save_kv_cache=True,        # if True and KV cache exists, save it
-)
-clf = TabICLClassifier.load("classifier.pkl")
-```
-
-When KV cache exists and is saved, you can set `save_training_data=False` to exclude
-cached training data, which may be useful for data privacy.
-
-## Advanced configuration
-
-TabICL offers a set of parameters to customize its behavior. The following example shows all available parameters with their default values and brief descriptions:
-
-```python
-from tabicl import TabICLClassifier
-
-clf = TabICLClassifier(
-    n_estimators=8,  # number of ensemble members, more = better but slower
-    norm_methods=None,  # normalization methods to try
-    feat_shuffle_method="latin",  # feature permutation strategy
-    class_shuffle_method="shift",  # class permutation strategy
-    outlier_threshold=4.0,  # z-score threshold for outlier detection and clipping
-    softmax_temperature=0.9,  # temperature to control prediction confidence
-    average_logits=True,  # average logits (True) or probabilities (False)
-    support_many_classes=True,  # handle >10 classes automatically
-    batch_size=8,  # ensemble members processed together, lower to save memory
-    kv_cache=False,  # cache training data KV projections for faster repeated inference
-    model_path=None,  # path to checkpoint, None downloads from Hugging Face
-    allow_auto_download=True,  # auto-download checkpoint if not found locally
-    checkpoint_version="tabicl-classifier-v2-20260212.ckpt",  # pretrained checkpoint version
-    device=None,  # inference device: None auto-selects CUDA → XPU → MPS → CPU
-    use_amp="auto",  # automatic mixed precision for faster inference
-    use_fa3="auto",  # Flash Attention 3 for Hopper GPUs (e.g. H100)
-    offload_mode="auto",  # automatically decide when to use cpu/disk offloading
-    disk_offload_dir=None,  # directory for disk offloading
-    random_state=42,  # random seed for reproducibility
-    n_jobs=None,  # number of PyTorch threads for CPU inference
-    verbose=False,  # print detailed information during inference
-    inference_config=None,  # fine-grained inference control for advanced users
-)
-```
-
-`TabICLRegressor` accepts the same parameters except for the classification-specific ones:
-`class_shuffle_method`, `softmax_temperature`, `average_logits`, and `support_many_classes`.
-
-## Available models
-
-| Model | Classification checkpoint | Regression checkpoint |
-|-------|--------------------------|----------------------|
-| **TabICLv2** ([arXiv](https://arxiv.org/abs/2602.11139)) | `tabicl-classifier-v2-20260212.ckpt` (default) | `tabicl-regressor-v2-20260212.ckpt` (default) |
-| **TabICLv1.1** (May 2025, no paper) | `tabicl-classifier-v1.1-20250506.ckpt` | — |
-| **TabICLv1** ([ICML 2025](https://arxiv.org/abs/2502.05564)) | `tabicl-classifier-v1-20250208.ckpt` | — |
-
-- **TabICLv2**: Our latest model, supporting both classification and regression.
-  Strongly improved accuracy over v1 through better synthetic pre-training data,
-  architectural improvements, and better pre-training, with comparable runtime.
-- **TabICLv1.1**: TabICLv1 post-trained on an early version of the v2 prior. Classification only.
-- **TabICLv1**: Original model. Classification only.
-  TabICLv1 and v1.1 originally used `n_estimators=32`; we reduced the default to 8 afterwards.
-
-## Fine-tuning
-
-Zero-shot in-context learning is TabICL's default, but when a single downstream
-dataset is important enough to spend a few minutes adapting to,
-`FinetunedTabICLClassifier` and `FinetunedTabICLRegressor` specialize the
-pretrained checkpoint with a full PyTorch training loop, including AdamW with a
-cosine-with-warmup schedule, gradient clipping, early stopping
-against a held-out split, and multi-GPU runs.
-
-Install the fine-tune dependencies first:
-
-```bash
-pip install tabicl[finetune]
-```
-
-### Usage
-
-```python
-from tabicl import FinetunedTabICLClassifier
-
-clf = FinetunedTabICLClassifier(
-    epochs=50,                    # max passes over training data; early stopping may cut it short
-    learning_rate=1e-5,           # AdamW LR
-    n_estimators_finetune=2,      # ensemble members per training meta-batch
-    n_estimators_validation=2,    # ensemble size for end-of-epoch validation
-    n_estimators_inference=8,     # ensemble size of the fitted estimator used in predict()
-    early_stopping=True,          # stop when val metric plateaus for `patience` epochs
-    patience=10,                  # non-improving epochs tolerated before stopping
-    eval_metric="roc_auc",        # classifier: "roc_auc" | "log_loss" | "accuracy"
-    random_state=0,               # random seed
-    verbose=True,                 # tqdm progress bar
-)
-
-clf.fit(X_train, y_train, X_val=X_val, y_val=y_val, output_dir="./ckpts")
-y_pred = clf.predict(X_test)
-```
-
-`FinetunedTabICLRegressor` takes the same parameters (with `eval_metric` one of
-`"mse" | "mae" | "r2"`). See each class's docstring for the full surface.
-
-The checkpoint file written to `output_dir` follows the pretraining checkpoint
-schema, so it loads directly back into the zero-shot estimators:
-
-```python
-from tabicl import TabICLClassifier
-clf = TabICLClassifier(model_path="ckpts/best.ckpt")
-clf.fit(X_train, y_train)
+clf = TabICLClassifier(model_path="checkpoints/tabicl-m/clf/step-3000.ckpt")
+clf.fit(X_train, y_train)         # X_train may contain NaN in any column
 clf.predict(X_test)
+print(clf.X_encoder_.impute)      # False: the model saw the gaps
 ```
 
-Multi-GPU fine-tuning is auto-detected under `torchrun`:
+KV caching, save and load, the full parameter list, fine-tuning, forecasting, and
+SHAP work as in upstream TabICL. See [Inherited features](#inherited-features).
+
+## Missing values: how each path treats them
+
+| Path | Numeric NaN | Categorical NaN | Column statistics | Seen in pre-training |
+|---|---|---|---|---|
+| TabICLv2, released | mean-imputed | own category | include imputed values | no |
+| TabICLv2 + indicator columns | mean-imputed | own category | include imputed values | no |
+| TabICL-M, `col_missing_aware` | kept as NaN | kept as NaN | observed cells only | yes, after stage 4 |
+
+## Continued pre-training (stage 4)
+
+TabICL-M is trained by continuing from the released TabICLv2 weights with the
+three parts switched on. The new parameters are zero at step 0, so the run starts
+exactly at the released model on complete data. One GPU with 24 GB is enough for
+the default settings.
 
 ```bash
-torchrun --nproc-per-node=2 finetune_script.py
+pip install -e ".[pretrain]"
+python -c "from tabicl import TabICLClassifier, TabICLRegressor; TabICLClassifier()._load_model(); TabICLRegressor()._load_model()"
+bash scripts/train_v2_missing_stage4.sh clf
+bash scripts/train_v2_missing_stage4.sh reg
 ```
 
-The tutorial [`tutorials/finetune_classifier.py`](tutorials/finetune_classifier.py)
-walks through the fine-tuning for a binary classification task.
+The script copies the stage-3 recipe of TabICLv2 and adds:
 
-<img src="./docs/figures/finetune_decision_boundaries.png" width="85%" alt="Decision boundaries before and after fine-tuning" style="display: block; margin: auto;">
+```
+--missing_enabled True        # block-structured and cell-wise missingness in the prior
+--col_missing_aware True      # observed-only column embedding with absence vector
+--recon_weight 0.1            # masked-cell reconstruction, hide up to 30 % of observed cells
+--checkpoint_path <released>  --only_load_model True
+```
 
-## Time series forecasting
+Environment variables override the defaults, for example `STEPS=6000 BATCH=64
+NUM_GPUS=4 RECON_WEIGHT=0.05`. The trainer logs the task loss and the
+reconstruction loss separately. The task loss should stay near its starting value.
+The reconstruction loss should fall. Checkpoints are written to
+`checkpoints/tabicl-m/<task>/step-*.ckpt` and load directly into the estimators.
 
-TabICL can be used for zero-shot time series forecasting via `TabICLForecaster`.
-Install the forecast dependencies first:
+All `--missing_*` options are listed by `python -m tabicl.train --help`. The
+same options apply to `python -m tabicl.prior` when tables are pre-generated to
+disk, and the missingness configuration is written to the dataset `metadata.json`.
+
+![Where the missingness transform sits in the pre-training pipeline](./docs/figures/missingness_prior/pipeline.svg)
+
+*The missingness transform runs on every batch right after the structural causal
+model prior, whether tables are generated on the fly or written to disk. It is a
+bypass unless `--missing_enabled True` is passed.*
+
+## Evaluation
+
+`scripts/ablation_missingness.py` deletes cells from complete tables under a
+stated mechanism at a stated rate and compares:
+
+| Model name | What it is |
+|---|---|
+| `tabicl_impute` | released TabICLv2, NaN mean-imputed (the baseline) |
+| `tabicl_indicator` | as above, plus one 0/1 indicator column per incomplete feature |
+| `tabicl_aware_zero` | released weights inside the TabICL-M architecture, new parameters at zero |
+| `tabicl_aware` | a TabICL-M checkpoint from stage 4 |
+| `xgboost`, `catboost`, `tabpfn` | baselines with native NaN handling |
+
+Mechanisms are `mcar`, `mar`, `mnar`, and `block`. Metrics are AUC, accuracy, and
+log loss for classification, and RMSE, R², and the coverage and width of the
+80 % prediction interval for regression. A CSV with a source column runs
+leave-one-source-out splits on its natural gaps.
 
 ```bash
-pip install tabicl[forecast]
+# synthetic ablation
+python scripts/ablation_missingness.py --out results/ablation \
+    --datasets diabetes openml:1590 --aware_ckpt checkpoints/tabicl-m/clf/step-3000.ckpt \
+    --aware_ckpt_reg checkpoints/tabicl-m/reg/step-3000.ckpt --plot
+
+# real multi-source table, leave-one-source-out, natural missingness
+python scripts/ablation_missingness.py --out results/loso \
+    --datasets csv:data/compaction.csv --target rho_d_max --source_col lab \
+    --task regression --loso --natural --aware_ckpt_reg checkpoints/tabicl-m/reg/step-3000.ckpt
 ```
 
-`TabICLForecaster` accepts the following parameters:
+Outputs are `results.csv` with one row per fit, `summary.csv` and `summary.md`
+with mean and spread over seeds, and plots. `--resummarize` rebuilds the tables
+from a saved results file.
 
-```python
-from tabicl import TabICLForecaster
+### Results so far
 
-forecaster = TabICLForecaster(
-    max_context_length=4096,  # max historical timesteps to use as context
-    temporal_features=None,  # None = ["index", "datetime", "periodic"]; also accepts a list mixing string names and TimeTransform instances
-    point_estimate="mean",  # point prediction method: "mean" or "median"
-    tabicl_config=None,  # passed to TabICLRegressor; None uses default settings
-)
+Released TabICLv2 weights only, before any stage-4 training. Three datasets, three
+mechanisms, three rates, three seeds, 360 fits. Diabetes regression, RMSE, mean
+over seeds:
+
+| Mechanism | Rate | `tabicl_impute` | `tabicl_indicator` | `tabicl_aware_zero` | `xgboost` |
+|---|---|---|---|---|---|
+| complete | 0.0 | 56.6 | 56.6 | 56.6 | 62.1 |
+| MCAR | 0.3 | 61.9 | 61.8 | 62.0 | 67.5 |
+| MCAR | 0.5 | 65.6 | 65.5 | 65.5 | 69.9 |
+| MNAR | 0.5 | 62.6 | 62.2 | 63.3 | 71.0 |
+| block | 0.5 | 63.8 | 63.6 | 63.5 | 69.7 |
+
+The seed spread is 1 to 3 RMSE units, so the three TabICL variants do not differ.
+This is the expected result before training: the new parameters are zero. It
+establishes two facts. The architecture change does not hurt. And the baseline is
+strong: mean imputation inside an in-context learner already absorbs most of the
+damage, with the 80 % interval widening from 1.75 to 2.09 target standard
+deviations as the deletion rate rises to 0.5 and coverage staying between 0.77 and
+0.81. Whether TabICL-M improves on this is decided by the stage-4 run and the
+leave-one-source-out test. Full tables: `results/ablation_v2/summary.md`.
+
+## What remains
+
+1. **Stage-4 training.** Run `scripts/train_v2_missing_stage4.sh` for the
+   classifier and the regressor on a GPU. Check that the task loss stays flat and
+   the reconstruction loss falls.
+2. **Trained ablation.** Rerun the evaluation with `--aware_ckpt` and
+   `--aware_ckpt_reg`, on harder datasets than the built-in ones, and with
+   per-source offset and noise injected in the block mechanism. The built-in
+   classification sets sit at AUC 0.98 to 1.00 and cannot separate the models.
+3. **Leave-one-source-out on real data.** The compaction database with its
+   provenance groups is the target case. Random splits overstate the result,
+   because the model can learn the source instead of the physics.
+4. **Ablate each part.** Each flag can be switched off. A part that adds nothing
+   is dropped from the claim.
+
+If the trained model does not beat mean imputation on the block case with source
+shift, the honest result is that TabICLv2 is already robust to missing cells.
+
+## Repository map
+
+```
+src/tabicl/prior/_missingness.py      block-structured and cell-wise missingness for prior tables
+src/tabicl/_model/embedding.py        missing-aware column embedding (col_missing_aware)
+src/tabicl/_model/layers.py           key padding mask through the induced self-attention block
+src/tabicl/_model/interaction.py      per-feature token outputs for reconstruction
+src/tabicl/_model/tabicl.py           flags, reconstruction head and loss, tolerant checkpoint loading
+src/tabicl/train/_reconstruction.py   hide-mask sampling for the reconstruction objective
+src/tabicl/train/_run.py              joint loss in the trainer
+src/tabicl/_sklearn/                  NaN pass-through when the model is missing-aware
+scripts/train_v2_missing_stage4.sh    continued pre-training recipe
+scripts/ablation_missingness.py       evaluation runner
+tests/test_prior_missingness.py       tests for each part (62 in total)
+tests/test_missing_aware_embedding.py
+tests/test_reconstruction_head.py
+tests/test_ablation_runner.py
+docs/tabicl_m_architecture.md         architecture, objective, and file-by-file revisions
+docs/figures/missingness_prior/       diagrams: architecture, prior mechanism, pipeline (PNG and SVG)
 ```
 
-The following example shows how it works for univariate forecasting:
+Run the tests with `pytest tests/`. The four new files need no checkpoint. On
+macOS, XGBoost and torch load two different OpenMP runtimes and can deadlock in one
+process; the ablation runner fits tree baselines in a spawned child for that reason.
 
-```python
-import pandas as pd
-from tabicl import TabICLForecaster
-from tabicl.forecast import TimeSeriesDataFrame, plot_forecast
+## Inherited features
 
-df = pd.read_csv(
-    "https://autogluon.s3.amazonaws.com/datasets/timeseries/australian_electricity_subset/test.csv",
-    parse_dates=["timestamp"],
-)
-data = TimeSeriesDataFrame.from_data_frame(df)
+Everything below comes from upstream TabICLv2 and is unchanged.
 
-prediction_length = 96
-selected_items = data.item_ids[:2]
-train_data, test_data = data.train_test_split(prediction_length)
+**KV cache and persistence.** `TabICLClassifier(kv_cache=True)` caches the
+training context during `fit` for fast repeated `predict`. `clf.save(path)` and
+`TabICLClassifier.load(path)` persist a fitted estimator, optionally without the
+training data when a cache exists.
 
-context_df = train_data.reset_index()
-context_df = context_df[context_df["item_id"].isin(selected_items)]
-test_df = test_data.reset_index()
-test_df = test_df[test_df["item_id"].isin(selected_items)]
-test_df = test_df.groupby("item_id").tail(prediction_length)
+**Parameters.** `n_estimators=8`, `norm_methods`, `feat_shuffle_method="latin"`,
+`class_shuffle_method="shift"`, `outlier_threshold=4.0`,
+`softmax_temperature=0.9`, `average_logits=True`, `support_many_classes=True`,
+`batch_size=8`, `model_path`, `checkpoint_version`, `device`, `use_amp="auto"`,
+`use_fa3="auto"`, `offload_mode="auto"`, `random_state=42`, `n_jobs`,
+`inference_config`. See the class docstrings.
 
-forecaster = TabICLForecaster(max_context_length=10240)
-pred_df = forecaster.predict_df(context_df, prediction_length=prediction_length)
-fig, axes = plot_forecast(context_df=context_df, pred_df=pred_df, test_df=test_df)
-```
+**Available upstream checkpoints.** `tabicl-classifier-v2-20260212.ckpt` and
+`tabicl-regressor-v2-20260212.ckpt` (default), plus the v1 and v1.1 classifiers.
+They download from Hugging Face on first use.
 
-<img src="./docs/figures/tabiclv2_time_series.png" width="60%" alt="Runtimes for different hardware and sample sizes" style="display: block; margin: auto;">
+**Fine-tuning.** `FinetunedTabICLClassifier` and `FinetunedTabICLRegressor`
+adapt a checkpoint to one dataset with AdamW, early stopping, and multi-GPU under
+`torchrun`. See `tutorials/finetune_classifier.py`.
 
-`TabICLForecaster` is heavily inspired by [TabPFN-TS](https://arxiv.org/abs/2501.02945v3). We may later improve it to enhance the ability of TabICL for time series forecasting.
+**Time series.** `TabICLForecaster` does zero-shot forecasting through the
+regressor. See `tutorials/time_series_forecasting.py`.
 
-## Explainability
+**Explainability.** `tabicl.shap` computes SHAP values using an all-NaN background
+row. With the released checkpoints the all-NaN columns are handled by the wrapper.
 
-TabICL integrates with [SHAP](https://github.com/shap/shap) via `tabicl.shap`. It uses a single all-NaN row as the SHAP background, exploiting TabICL's native NaN handling so that masked features are genuinely removed from the model's perspective instead of being replaced by a reference value.
+**Pre-training from scratch.** The three-stage TabICLv2 recipes are in
+`scripts/train_v2_{clf,reg}_stage{1,2,3}.sh`. Prior tables can be generated on the
+fly or written to disk with `python -m tabicl.prior`.
 
-### SHAP values
-
-```python
-from sklearn.datasets import load_breast_cancer
-from sklearn.model_selection import train_test_split
-from tabicl import TabICLClassifier
-from tabicl.shap import get_shap_values, plot_shap
-
-X, y = load_breast_cancer(return_X_y=True)
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.8, random_state=42)
-
-clf = TabICLClassifier()
-clf.fit(X_train, y_train)
-
-shap_values = get_shap_values(
-    estimator=clf,                                       # fitted TabICLClassifier or TabICLRegressor
-    X_test=X_test[:10],                                  # samples to explain
-    attribute_names=load_breast_cancer().feature_names,  # feature names
-)
-
-plot_shap(shap_values)
-```
-
-`get_shap_values` also accepts any extra keyword arguments and forwards them to the underlying `shap.Explainer`.
-
-## Pre-training
-
-Pre-training code (including synthetic data generation) is available for **both TabICLv1 and TabICLv2**.
-
-> **Note:** The original pre-training likely used AMP with float16, but this can lead to instabilities 
-> (https://github.com/soda-inria/tabicl/pull/151#discussion_r3869087460), 
-> so we're leaving float32 as the default value in the scripts.
-> While the code has been vibe-migrated from the original
-> (private) pre-training codebase, users have been able to achieve good performance with it.
-> On systems with fewer CPU cores, it might speed up the training to reduce n_jobs 
-> (e.g., to 12 on a 64-core system). 
-> On 4xH100, it should be possible to reach 0.7-0.8s/step 
-> for stage 1 with float16 and 1s/step with float32.
-
-The easiest way to pre-train is to run the stage scripts in the `scripts` folder, which contain
-the full recipes (they launch `python -m tabicl.train` under `torchrun` with all arguments set).
-Adjust the placeholder checkpoint paths, `NUM_GPUS`, and `--n_jobs` at the top of each script for
-your hardware, then run the three stages in order, e.g. for the TabICLv2 classifier:
-
-```bash
-bash scripts/train_v2_clf_stage1.sh
-bash scripts/train_v2_clf_stage2.sh   # loads the stage-1 checkpoint
-bash scripts/train_v2_clf_stage3.sh   # loads the stage-2 checkpoint
-```
-
-Available recipes:
-- **TabICLv2** ([arXiv](https://arxiv.org/abs/2602.11139), §4.1): classifier [stage 1](./scripts/train_v2_clf_stage1.sh), [stage 2](./scripts/train_v2_clf_stage2.sh),
-  [stage 3](./scripts/train_v2_clf_stage3.sh); regressor [stage 1](./scripts/train_v2_reg_stage1.sh),
-  [stage 2](./scripts/train_v2_reg_stage2.sh), [stage 3](./scripts/train_v2_reg_stage3.sh).
-- **TabICLv1**: [stage 1](./scripts/train_stage1.sh), [stage 2](./scripts/train_stage2.sh),
-  [stage 3](./scripts/train_stage3.sh).
-
-By default, `tabicl.train` generates synthetic prior datasets **on the fly** in the DataLoader
-workers while training — this is how the TabICLv2 checkpoints were trained (and what the v2
-scripts do). Alternatively, datasets can be **pre-generated to disk** with
-`python -m tabicl.prior --save_dir /my/prior/dir --num_batches 100000 ...` and loaded during
-training via `--prior_dir`, which is how TabICLv1 was trained (the v1 scripts show both variants).
-
-Training supports classification (cross-entropy) and quantile regression (pinball loss, via
-`--regression_method quantile`), and both the **AdamW** (default) and **Muon** (`--muon True`)
-optimizers. See `python -m tabicl.train --help` for the full set of options.
-
-A note on the v2 training: the paper reports using cautious weight decay, which is
-available via `--use_cautious_wd`, but the released checkpoints were trained with it left `False`
-(it was not wired into Muon during the reference runs), so the v2 scripts keep it `False` to
-reproduce that behavior.
-
-## Nanotabicl: a minimal architecture implementation
-
-We provide a minimal implementation of the TabICLv2 architecture 
-[here](https://github.com/soda-inria/nanotabicl), 
-for educational and experimental purposes.
-
-## FAQ
-
-**What is TabICL?**
-TabICL is a tabular foundation model (like TabPFN). 
-It uses in-context learning (ICL) to learn from new data 
-in a single forward pass through a Transformer model: 
-`y_pred = model(X_train, y_train, X_test)` (this is called inside `predict()`).
-It has acquired strong learning capabilities through 
-pre-training on millions of synthetic datasets.
-
-**How fast is TabICL?** On datasets with $n$ training rows and $m$ columns, 
-the runtime complexity of TabICL (v1 and v2) is $O(n^2 + nm^2)$. 
-On datasets with many rows and columns, it can be 10x faster than TabPFN-2.5. 
-On modern GPUs, TabICL can handle a million samples 
-in a few minutes without RAM overflow
-thanks to CPU and disk offloading.
-
-<img src="./docs/figures/runtime_tabpfnv25_tabiclv2.png" width="70%" alt="Runtimes for different hardware and sample sizes" style="display: block; margin: auto;">
-
-**What dataset sizes work well?** 
-TabICLv2 is pre-trained on datasets between 300 and 48K training samples.
-However, it can generalize to larger datasets to some extent, 
-and we see good results even on some datasets with 600K samples. 
-We have not tested if TabICL generalizes to datasets smaller than 300 samples.
-
-<img src="./docs/figures/tabiclv2_perf_vs_n_samples.png" width="70%" alt="Average rank vs. number of samples" style="display: block; margin: auto;">
-
-**What about the number of columns?**
-TabICLv2 is pre-trained on datasets between 2 and 100 columns. It can degrade when going much beyond 100 features.
-
-<img src="./docs/figures/tabiclv2_perf_vs_n_features.png" width="70%" alt="Average rank vs. number of features" style="display: block; margin: auto;">
-
-## Preprocessing
-
-### Simple built-in preprocessing
-For `X`, TabICL accepts pandas dataframes or numpy arrays.
-It applies the following preprocessing:
-- Detect and ordinal encode categorical columns 
-  (including string, object, category, and boolean types). For numpy arrays,
-  all columns have the same datatype (the one of the array). 
-  Columns with integers are detected as numerical.
-- Create a separate category for missing values in categorical features
-- Perform mean imputation for missing numerical values (encoded as NaN)
-- Outlier detection and removal
-- Feature scaling and normalization
-- Feature shuffling for ensemble diversity
-
-### Advanced data preprocessing with skrub <img src="https://skrub-data.github.io/stable/_static/skrub.svg" width="8%" alt="skrub logo" style="display: inline; margin-left: 5px; margin-right: 5px;">
-
-Real-world datasets often contain complex heterogeneous data that benefits from more sophisticated preprocessing. For these scenarios, we recommend [skrub](https://skrub-data.org/stable/index.html), a powerful library designed specifically for advanced tabular data preparation.
-
-**Why use skrub?**
-- Handles diverse data types (numerical, categorical, text, datetime, etc.)
-- Provides robust preprocessing for dirty data
-- Offers sophisticated feature engineering capabilities
-- Supports multi-table integration and joins
-
-#### Installation
-
-```bash
-pip install skrub -U
-```
-
-#### Basic Integration
-
-Use skrub's [TableVectorizer](https://skrub-data.org/stable/reference/generated/skrub.TableVectorizer.html) to transform your raw data before passing it to TabICLClassifier:
-
-```python
-from skrub import TableVectorizer
-from tabicl import TabICLClassifier
-from sklearn.pipeline import make_pipeline
-
-pipeline = make_pipeline(
-    TableVectorizer(low_cardinality="passthrough"),  # Automatically handles various data types
-    TabICLClassifier()
-)
-
-pipeline.fit(X_train, y_train)  # X should be a DataFrame
-predictions = pipeline.predict(X_test)
-```
+**Preprocessing.** Categorical columns are ordinal-encoded, outliers clipped,
+features scaled and normalised, and features shuffled across ensemble members.
+For heterogeneous raw data, [skrub](https://skrub-data.org) `TableVectorizer` in a
+scikit-learn pipeline works well in front of the estimators.
 
 ## Citation
-If you use TabICL for research purposes, 
-please cite our papers for **[TabICL](https://arxiv.org/abs/2502.05564)** and **[TabICLv2](https://arxiv.org/abs/2602.11139)**:
+
+TabICL-M has no paper yet. If you use this code, cite the upstream TabICL papers:
+
 ```bibtex
 @inproceedings{qu2025tabicl,
   title={Tab{ICL}: {A} Tabular Foundation Model for In-Context Learning on Large Data},
@@ -438,12 +336,10 @@ please cite our papers for **[TabICL](https://arxiv.org/abs/2502.05564)** and **
 }
 ```
 
-## Contributors
+## Authors and license
 
-- [Jingang Qu](https://github.com/jingangQu)
-- [David Holzmüller](https://github.com/dholzmueller)
-- [Marine Le Morvan](https://github.com/marineLM)
+TabICL-M: Sompote Youwai, King Mongkut's University of Technology Thonburi.
 
-## Star history
-
-[![Star History Chart](https://star-history.dera.page/svg?repos=soda-inria/tabicl&type=date&legend=top-left)](https://star-history.dera.page/#soda-inria/tabicl&type=date&legend=top-left)
+Upstream TabICL: Jingang Qu, David Holzmüller, Marine Le Morvan, and Gaël
+Varoquaux (Inria Soda). Both are released under the BSD 3-Clause License, see
+`LICENSE`.

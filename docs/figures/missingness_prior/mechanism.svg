@@ -1,0 +1,107 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 560" role="img" aria-label="Inside apply_missingness: a complete table branches into block masking and cell masking, the masks are unioned, safety constraints are enforced, an optional source-id column is appended, and missing cells become NaN.">
+  <style>svg{color:#1E2430;font-family:'IBM Plex Sans',Helvetica,Arial,sans-serif;background:#fff}  .box { fill: #FFFFFF; stroke: #1E2430; stroke-width: 1.2; }
+  .box-new { fill: #D7EEEA; stroke: #0F766E; stroke-width: 1.6; }
+  .t { font-size: 12.5px; fill: #1E2430; }
+  .t-b { font-size: 12.5px; fill: #1E2430; font-weight: 600; }
+  .t-s { font-size: 11px; fill: #5B6675; }
+  .t-m { font-size: 11px; fill: #1E2430; font-family: "IBM Plex Mono", Menlo, monospace; }
+  .t-new { font-size: 12.5px; fill: #0F766E; font-weight: 600; }
+  .edge { stroke: #1E2430; stroke-width: 1.2; fill: none; }
+  .arrhead-new { fill: #0F766E; }
+  .edge-new { stroke: #0F766E; stroke-width: 1.6; fill: none; }
+  .edge-dash { stroke: #1E2430; stroke-width: 1.1; fill: none; stroke-dasharray: 4 3; }
+  .cell { fill: #FFFFFF; stroke: #D3D9E0; stroke-width: .8; }
+  .cell-miss { fill: #DEE3E9; stroke: #9AA5B4; stroke-width: .8; }
+  .cell-src { fill: #D7EEEA; stroke: #0F766E; stroke-width: .8; }
+  .tag { display: inline-block; font-family: "IBM Plex Mono", Menlo, monospace; font-size: 11px; padding: 1px 6px; border-radius: 3px; border: 1px solid #D3D9E0; color: #5B6675; }
+  .tag.new { color: #0F766E; border-color: #0F766E; }</style><defs>
+    <marker id="arr2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#1E2430"/>
+    </marker>
+  </defs>
+
+  <!-- input -->
+  <rect x="340" y="16" width="200" height="44" rx="4" class="box"/>
+  <text x="440" y="35" text-anchor="middle" class="t-b">complete table X (T × d)</text>
+  <text x="440" y="51" text-anchor="middle" class="t-s">p_apply = 0.6 · else returned as is</text>
+
+  <path d="M440,60 L440,84" class="edge"/>
+  <path d="M440,84 L200,84 L200,110" class="edge" marker-end="url(#arr2)"/>
+  <path d="M440,84 L680,84 L680,110" class="edge" marker-end="url(#arr2)"/>
+  <text x="212" y="102" class="t-s">p_block = 0.6</text>
+  <text x="692" y="102" class="t-s">p_cell = 0.6</text>
+
+  <!-- block branch -->
+  <rect x="40" y="112" width="320" height="246" rx="4" class="box"/>
+  <text x="56" y="134" class="t-b">block_mask · multi-source merge</text>
+  <text x="56" y="154" class="t">K sources, 2 to 8, Dirichlet row shares</text>
+  <text x="56" y="172" class="t">each source observes a fraction 0.3 to 1 of features</text>
+  <text x="56" y="190" class="t">core features seen by all: up to d/2</text>
+  <text x="56" y="208" class="t">per-source offset ≤ 0.5 σ, noise ≤ 0.3 σ (numeric only)</text>
+  <text x="56" y="226" class="t">rows contiguous by source with p = 0.25</text>
+
+  <!-- mini grid: 3 sources x 6 features, 9 rows -->
+  <text x="56" y="252" class="t-s">source</text>
+  <text x="112" y="252" class="t-s">f1</text><text x="136" y="252" class="t-s">f2</text><text x="160" y="252" class="t-s">f3</text><text x="184" y="252" class="t-s">f4</text><text x="208" y="252" class="t-s">f5</text><text x="232" y="252" class="t-s">f6</text>
+  <!-- source A rows: observes f1 f2 f3 f6 -->
+  <text x="56" y="270" class="t-s">A</text>
+  <rect x="108" y="259" width="20" height="14" class="cell"/><rect x="132" y="259" width="20" height="14" class="cell"/><rect x="156" y="259" width="20" height="14" class="cell"/><rect x="180" y="259" width="20" height="14" class="cell-miss"/><rect x="204" y="259" width="20" height="14" class="cell-miss"/><rect x="228" y="259" width="20" height="14" class="cell"/>
+  <rect x="108" y="276" width="20" height="14" class="cell"/><rect x="132" y="276" width="20" height="14" class="cell"/><rect x="156" y="276" width="20" height="14" class="cell"/><rect x="180" y="276" width="20" height="14" class="cell-miss"/><rect x="204" y="276" width="20" height="14" class="cell-miss"/><rect x="228" y="276" width="20" height="14" class="cell"/>
+  <!-- source B rows: observes f1 f4 f5 -->
+  <text x="56" y="304" class="t-s">B</text>
+  <rect x="108" y="293" width="20" height="14" class="cell"/><rect x="132" y="293" width="20" height="14" class="cell-miss"/><rect x="156" y="293" width="20" height="14" class="cell-miss"/><rect x="180" y="293" width="20" height="14" class="cell"/><rect x="204" y="293" width="20" height="14" class="cell"/><rect x="228" y="293" width="20" height="14" class="cell-miss"/>
+  <rect x="108" y="310" width="20" height="14" class="cell"/><rect x="132" y="310" width="20" height="14" class="cell-miss"/><rect x="156" y="310" width="20" height="14" class="cell-miss"/><rect x="180" y="310" width="20" height="14" class="cell"/><rect x="204" y="310" width="20" height="14" class="cell"/><rect x="228" y="310" width="20" height="14" class="cell-miss"/>
+  <!-- source C row: observes f1 f2 f5 f6 -->
+  <text x="56" y="338" class="t-s">C</text>
+  <rect x="108" y="327" width="20" height="14" class="cell"/><rect x="132" y="327" width="20" height="14" class="cell"/><rect x="156" y="327" width="20" height="14" class="cell-miss"/><rect x="180" y="327" width="20" height="14" class="cell-miss"/><rect x="204" y="327" width="20" height="14" class="cell"/><rect x="228" y="327" width="20" height="14" class="cell"/>
+  <text x="264" y="270" class="t-s">f1 = core</text>
+  <text x="264" y="286" class="t-s">observed</text>
+  <rect x="264" y="294" width="14" height="10" class="cell"/>
+  <text x="264" y="322" class="t-s">missing</text>
+  <rect x="264" y="330" width="14" height="10" class="cell-miss"/>
+
+  <!-- cell branch -->
+  <rect x="520" y="112" width="320" height="246" rx="4" class="box"/>
+  <text x="536" y="134" class="t-b">cell_mask · scattered gaps</text>
+  <text x="536" y="154" class="t">one mechanism per table, p = 0.4 / 0.3 / 0.3</text>
+  <text x="536" y="176" class="t-b">MCAR</text>
+  <text x="590" y="176" class="t">Bernoulli(rate), independent of data</text>
+  <text x="536" y="196" class="t-b">MAR</text>
+  <text x="590" y="196" class="t">p = σ(s · z_k + c), driver is another column k</text>
+  <text x="536" y="216" class="t-b">MNAR</text>
+  <text x="590" y="216" class="t">p = σ(s · z_j + c), driver is the column itself</text>
+  <text x="590" y="232" class="t">or censoring: drop the top or bottom quantile</text>
+  <text x="536" y="256" class="t">per-column rate = 0.7 · Beta(0.7, 2.5), mean ≈ 0.15</text>
+  <text x="536" y="274" class="t">fraction of columns affected: 0.1 to 1</text>
+  <text x="536" y="292" class="t">c solved by bisection so the mean p equals the rate</text>
+  <text x="536" y="310" class="t">masks computed on the complete table, never on NaN</text>
+  <text x="536" y="328" class="t-s">slope s drawn from 0.5 to 4</text>
+
+  <!-- union -->
+  <path d="M200,358 L200,372 L440,372" class="edge"/>
+  <path d="M680,358 L680,372 L440,372 L440,384" class="edge" marker-end="url(#arr2)"/>
+  <rect x="340" y="386" width="200" height="34" rx="4" class="box"/>
+  <text x="440" y="407" text-anchor="middle" class="t-b">mask = block OR cell</text>
+
+  <path d="M440,420 L440,434" class="edge" marker-end="url(#arr2)"/>
+  <rect x="290" y="436" width="300" height="44" rx="4" class="box"/>
+  <text x="440" y="454" text-anchor="middle" class="t-b">enforce minimum observed</text>
+  <text x="440" y="470" text-anchor="middle" class="t-s">≥ 2 observed training cells per column · ≥ 1 feature per row</text>
+
+  <path d="M440,480 L440,494" class="edge" marker-end="url(#arr2)"/>
+  <rect x="290" y="496" width="300" height="44" rx="4" class="box"/>
+  <text x="440" y="514" text-anchor="middle" class="t-b">append source id, p = 0.5, then permute columns</text>
+  <text x="440" y="530" text-anchor="middle" class="t-s">only after block masking and only if d &lt; H · d′ = d + 1</text>
+
+  <!-- output -->
+  <path d="M590,518 L640,518" class="edge" marker-end="url(#arr2)"/>
+  <rect x="644" y="496" width="196" height="44" rx="4" class="box-new"/>
+  <text x="742" y="514" text-anchor="middle" class="t-new">X.masked_fill(mask, NaN)</text>
+  <text x="742" y="530" text-anchor="middle" class="t-s">returns X, d′, info</text>
+
+  <!-- source column sample -->
+  <rect x="40" y="496" width="230" height="44" rx="4" class="box" stroke-dasharray="4 3"/>
+  <text x="155" y="514" text-anchor="middle" class="t-s">source id column, values A A B B C</text>
+  <rect x="80" y="521" width="20" height="12" class="cell-src"/><rect x="104" y="521" width="20" height="12" class="cell-src"/><rect x="128" y="521" width="20" height="12" class="cell-src"/><rect x="152" y="521" width="20" height="12" class="cell-src"/><rect x="176" y="521" width="20" height="12" class="cell-src"/><rect x="200" y="521" width="20" height="12" class="cell-src"/>
+  </svg>

@@ -1,9 +1,10 @@
 [project]
-name = "tabicl"
+name = "tabicl-m"
 dynamic = ["version"]
-description = "TabICL: An open tabular foundation model"
+description = "TabICL-M: a tabular foundation model for incomplete tables, built on TabICLv2"
 readme = "README.md"
 authors = [
+    { name = "Sompote Youwai" },
     { name = "Jingang Qu" },
     { name = "David Holzmüller" } ,
     { name = "Marine Le Morvan" } ,
@@ -11,7 +12,7 @@ authors = [
 ]
 license = { file = "LICENSE" }
 requires-python = ">=3.10"
-keywords = ["tabular data", "foundation model", "TabICL", "in-context learning"]
+keywords = ["tabular data", "foundation model", "TabICL", "in-context learning", "missing values", "multi-source data"]
 classifiers = [
     "Intended Audience :: Science/Research",
     "Intended Audience :: Developers",

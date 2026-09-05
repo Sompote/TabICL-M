@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 330" role="img" aria-label="Pipeline: SCM priors produce complete tables, the new MissingnessTransform inserts NaN cells, and the result flows either to the trainer or to disk and back.">
+  <style>svg{color:#1E2430;font-family:'IBM Plex Sans',Helvetica,Arial,sans-serif;background:#fff}  .box { fill: #FFFFFF; stroke: #1E2430; stroke-width: 1.2; }
+  .box-new { fill: #D7EEEA; stroke: #0F766E; stroke-width: 1.6; }
+  .t { font-size: 12.5px; fill: #1E2430; }
+  .t-b { font-size: 12.5px; fill: #1E2430; font-weight: 600; }
+  .t-s { font-size: 11px; fill: #5B6675; }
+  .t-m { font-size: 11px; fill: #1E2430; font-family: "IBM Plex Mono", Menlo, monospace; }
+  .t-new { font-size: 12.5px; fill: #0F766E; font-weight: 600; }
+  .edge { stroke: #1E2430; stroke-width: 1.2; fill: none; }
+  .arrhead-new { fill: #0F766E; }
+  .edge-new { stroke: #0F766E; stroke-width: 1.6; fill: none; }
+  .edge-dash { stroke: #1E2430; stroke-width: 1.1; fill: none; stroke-dasharray: 4 3; }
+  .cell { fill: #FFFFFF; stroke: #D3D9E0; stroke-width: .8; }
+  .cell-miss { fill: #DEE3E9; stroke: #9AA5B4; stroke-width: .8; }
+  .cell-src { fill: #D7EEEA; stroke: #0F766E; stroke-width: .8; }
+  .tag { display: inline-block; font-family: "IBM Plex Mono", Menlo, monospace; font-size: 11px; padding: 1px 6px; border-radius: 3px; border: 1px solid #D3D9E0; color: #5B6675; }
+  .tag.new { color: #0F766E; border-color: #0F766E; }</style><defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#1E2430"/>
+    </marker>
+    <marker id="arr-new" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" class="arrhead-new"/>
+    </marker>
+  </defs>
+
+  <!-- CLI / config -->
+  <rect x="20" y="20" width="200" height="56" rx="4" class="box"/>
+  <text x="120" y="42" text-anchor="middle" class="t-b">CLI parsers</text>
+  <text x="120" y="60" text-anchor="middle" class="t-m">--missing_* flags</text>
+
+  <rect x="20" y="120" width="200" height="56" rx="4" class="box-new"/>
+  <text x="120" y="142" text-anchor="middle" class="t-new">MissingnessConfig</text>
+  <text x="120" y="160" text-anchor="middle" class="t-m">prior/_missingness.py</text>
+
+  <path d="M120,76 L120,118" class="edge-new" marker-end="url(#arr-new)"/>
+  <text x="128" y="102" class="t-s">from_args()</text>
+
+  <!-- prior -->
+  <rect x="290" y="20" width="200" height="56" rx="4" class="box"/>
+  <text x="390" y="42" text-anchor="middle" class="t-b">SCM prior</text>
+  <text x="390" y="60" text-anchor="middle" class="t-s">mlp · tree · graph · dummy</text>
+
+  <!-- transform -->
+  <rect x="290" y="120" width="200" height="56" rx="4" class="box-new"/>
+  <text x="390" y="142" text-anchor="middle" class="t-new">MissingnessTransform</text>
+  <text x="390" y="160" text-anchor="middle" class="t-m">PriorDataset.get_batch</text>
+
+  <path d="M390,76 L390,118" class="edge" marker-end="url(#arr)"/>
+  <text x="398" y="96" class="t-s">X, y, d complete</text>
+  <text x="398" y="109" class="t-s">(B, T, H)</text>
+
+  <path d="M220,148 L288,148" class="edge-new" marker-end="url(#arr-new)"/>
+
+  <!-- bypass -->
+  <path d="M290,100 C250,100 250,215 290,215" class="edge-dash"/>
+  <text x="180" y="230" class="t-s">enabled = False:</text>
+  <text x="180" y="243" class="t-s">tables pass through</text>
+
+  <!-- outputs -->
+  <path d="M390,176 L390,214" class="edge-new" marker-end="url(#arr-new)"/>
+  <text x="398" y="192" class="t-s">X with NaN, d′ ≥ d</text>
+  <text x="398" y="205" class="t-s">y untouched</text>
+
+  <rect x="290" y="216" width="200" height="40" rx="4" class="box"/>
+  <text x="390" y="234" text-anchor="middle" class="t-b">batch</text>
+  <text x="390" y="249" text-anchor="middle" class="t-s">X, y, d, seq_lens, train_sizes</text>
+
+  <!-- trainer -->
+  <rect x="620" y="216" width="230" height="56" rx="4" class="box"/>
+  <text x="735" y="238" text-anchor="middle" class="t-b">Trainer · run_micro_batch</text>
+  <text x="735" y="256" text-anchor="middle" class="t-m">train/_run.py</text>
+  <path d="M490,236 L618,236" class="edge" marker-end="url(#arr)"/>
+  <text x="554" y="228" text-anchor="middle" class="t-s">on the fly</text>
+
+  <!-- disk path -->
+  <rect x="620" y="120" width="230" height="56" rx="4" class="box"/>
+  <text x="735" y="142" text-anchor="middle" class="t-b">SavePriorDataset → disk</text>
+  <text x="735" y="160" text-anchor="middle" class="t-s">sparse format keeps NaN · metadata.json</text>
+  <path d="M490,226 C560,226 560,148 618,148" class="edge" marker-end="url(#arr)"/>
+  <path d="M735,176 L735,214" class="edge" marker-end="url(#arr)"/>
+  <text x="743" y="199" class="t-s">LoadPriorDataset</text>
+
+  <!-- model warning -->
+  <rect x="620" y="290" width="230" height="30" rx="4" class="box" stroke-dasharray="4 3"/>
+  <text x="735" y="309" text-anchor="middle" class="t-s">model has no NaN path yet (step 2)</text>
+  <path d="M735,272 L735,288" class="edge-dash"/>
+
+  <!-- legend -->
+  <rect x="20" y="290" width="14" height="14" class="box-new"/>
+  <text x="40" y="301" class="t-s">new</text>
+  <rect x="80" y="290" width="14" height="14" class="box"/>
+  <text x="100" y="301" class="t-s">existing, edited to pass the config</text>
+</svg>

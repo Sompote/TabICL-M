@@ -6,9 +6,9 @@
 # -- Project information -----------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
 
-project = 'TabICL'
-copyright = '2026, TabICL authors'
-author = 'TabICL authors'
+project = 'TabICL-M'
+copyright = '2026, Sompote Youwai and the TabICL authors'
+author = 'Sompote Youwai and the TabICL authors'
 release = ''
 
 # -- General configuration ---------------------------------------------------

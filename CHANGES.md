@@ -1,3 +1,24 @@
+TabICL-M 0.1.0 (unreleased)
+===========================
+
+Fork of TabICL 2.2.0. The distribution is named ``tabicl-m``; the import name stays ``tabicl``.
+
+New features
+------------
+
+- Block-structured and cell-wise missingness in the pre-training prior
+  (``--missing_enabled`` and ``--missing_*`` options, ``tabicl.prior.MissingnessConfig``).
+- Missing-aware column embedding (``col_missing_aware``): NaN cells are hidden from the
+  inducing-point attention, a missing indicator is projected into the input, and a learned absence
+  vector is added to the embedding. New parameters start at zero, so complete data reproduces
+  TabICLv2 exactly.
+- Masked-cell reconstruction objective (``reconstruction`` flag, ``--recon_weight``).
+- ``TabICL.load_pretrained_state_dict`` loads a checkpoint trained without the new flags.
+- The scikit-learn estimators pass NaN through to a missing-aware model instead of imputing.
+- ``scripts/train_v2_missing_stage4.sh``: continued pre-training from the released checkpoints.
+- ``scripts/ablation_missingness.py``: evaluation under MCAR, MAR, MNAR and block missingness,
+  and leave-one-source-out on real multi-source tables.
+
 2.2.0
 =====
 
