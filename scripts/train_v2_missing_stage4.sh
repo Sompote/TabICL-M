@@ -44,7 +44,10 @@ DTYPE=${DTYPE:-float32}                          # float32 | bfloat16 (autocast;
 RECOMPUTE=${RECOMPUTE:-False}                    # activation checkpointing to cut memory
 ARCH=${ARCH:-baseline}                           # baseline | source_aware
 if [ "$ARCH" = "source_aware" ]; then
-    ARCH_ARGS="--col_group_stats True --row_missing_aware True --pattern_token True \
+    # Each part has its own switch so that it can be ablated: COL_GROUP_STATS, ROW_MISSING_AWARE,
+    # PATTERN_TOKEN (True/False), RECON_MODE (cell|block|mixed), CONSISTENCY_WEIGHT (0 = off).
+    ARCH_ARGS="--col_group_stats ${COL_GROUP_STATS:-True} --row_missing_aware ${ROW_MISSING_AWARE:-True} \
+               --pattern_token ${PATTERN_TOKEN:-True} \
                --recon_mode ${RECON_MODE:-mixed} --consistency_weight ${CONSISTENCY_WEIGHT:-0.1} \
                --consistency_p ${CONSISTENCY_P:-0.25} --consistency_max_seq_len ${CONSISTENCY_MAX_SEQ_LEN:-2048}"
     P_APPLY=${P_APPLY:-0.7}; P_CELL=${P_CELL:-0.4}; P_BLOCK=${P_BLOCK:-0.9}
