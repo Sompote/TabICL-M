@@ -60,7 +60,11 @@ for TASK in clf reg; do
     for attempt in 1 2 3 4 5; do
         [ -f $dir/$TASK/step-10000.ckpt ] && break
         log "4b $TASK attempt $attempt"
-        RELEASED_CKPT=$SRC LR=2e-5 ARCH=source_aware DTYPE=bfloat16 N_JOBS=8 STEPS=10000 BATCH=32 CKPT_ROOT=$dir \
+        # Stage 4b: stronger, more frequent per-source shifts than in stage 4 (the 10k model was already
+        # invariant to the small shifts it saw, but not to the larger ones of the evaluation).
+        RELEASED_CKPT=$SRC LR=3e-5 P_SHIFT=1.0 P_NOISE=0.8 MAX_SHIFT=1.2 MAX_NOISE=0.5 \
+            CONSISTENCY_SHIFT_MAX=1.2 CONSISTENCY_NOISE_MAX=0.5 CONSISTENCY_WEIGHT=0.3 \
+            ARCH=source_aware DTYPE=bfloat16 N_JOBS=8 STEPS=10000 BATCH=32 CKPT_ROOT=$dir \
             bash scripts/train_v2_missing_stage4.sh $TASK >> $dir/$TASK/train.log 2>&1
         log "4b $TASK attempt $attempt exit=$?"
     done

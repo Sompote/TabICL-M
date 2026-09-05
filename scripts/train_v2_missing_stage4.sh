@@ -49,7 +49,8 @@ if [ "$ARCH" = "source_aware" ]; then
     ARCH_ARGS="--col_group_stats ${COL_GROUP_STATS:-True} --row_missing_aware ${ROW_MISSING_AWARE:-True} \
                --pattern_token ${PATTERN_TOKEN:-True} \
                --recon_mode ${RECON_MODE:-mixed} --consistency_weight ${CONSISTENCY_WEIGHT:-0.1} \
-               --consistency_p ${CONSISTENCY_P:-0.25} --consistency_max_seq_len ${CONSISTENCY_MAX_SEQ_LEN:-2048}"
+               --consistency_p ${CONSISTENCY_P:-0.25} --consistency_max_seq_len ${CONSISTENCY_MAX_SEQ_LEN:-2048} \
+               --consistency_shift_max ${CONSISTENCY_SHIFT_MAX:-0.5} --consistency_noise_max ${CONSISTENCY_NOISE_MAX:-0.3}"
     P_APPLY=${P_APPLY:-0.7}; P_CELL=${P_CELL:-0.4}; P_BLOCK=${P_BLOCK:-0.9}
     P_CONTIGUOUS=${P_CONTIGUOUS:-0.75}; P_SHIFT=${P_SHIFT:-0.8}; P_NOISE=${P_NOISE:-0.6}
     LR=${LR:-5e-5}
@@ -139,6 +140,8 @@ torchrun --standalone --nproc_per_node=$NUM_GPUS -m tabicl.train \
             --missing_p_contiguous_sources $P_CONTIGUOUS \
             --missing_p_source_shift $P_SHIFT \
             --missing_p_source_noise $P_NOISE \
+            --missing_max_shift_scale ${MAX_SHIFT:-0.5} \
+            --missing_max_noise_scale ${MAX_NOISE:-0.3} \
             --missing_p_source_column 0.5 \
             --col_missing_aware True \
             --recon_weight $RECON_WEIGHT \

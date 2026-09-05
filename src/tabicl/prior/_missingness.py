@@ -182,6 +182,12 @@ class MissingnessConfig:
         g.add_argument("--missing_p_source_shift", default=0.5, type=float, help="Probability of per-source offset")
         g.add_argument("--missing_p_source_noise", default=0.5, type=float, help="Probability of per-source noise")
         g.add_argument(
+            "--missing_max_shift_scale", default=0.5, type=float, help="Max per-source offset, in column std units"
+        )
+        g.add_argument(
+            "--missing_max_noise_scale", default=0.3, type=float, help="Max per-source noise level, in column std units"
+        )
+        g.add_argument(
             "--missing_p_source_column", default=0.5, type=float, help="Probability of appending a source-id column"
         )
 
@@ -201,6 +207,8 @@ class MissingnessConfig:
             "p_contiguous_sources",
             "p_source_shift",
             "p_source_noise",
+            "max_shift_scale",
+            "max_noise_scale",
             "p_source_column",
         ):
             value = getattr(args, f"missing_{name}", None)
