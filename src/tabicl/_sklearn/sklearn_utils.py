@@ -15,6 +15,18 @@ from typing import Any
 import numpy as np
 
 
+def nan_check_params() -> dict:
+    """Keyword arguments that make ``check_array`` accept NaN across sklearn versions.
+
+    scikit-learn renamed ``force_all_finite`` to ``ensure_all_finite`` in 1.6.
+    """
+    import inspect
+    from sklearn.utils.validation import check_array
+
+    name = "ensure_all_finite" if "ensure_all_finite" in inspect.signature(check_array).parameters else "force_all_finite"
+    return {name: "allow-nan"}
+
+
 def _is_pandas_df(X) -> bool:
     """Return True if the X is a pandas dataframe."""
     try:

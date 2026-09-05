@@ -1,8 +1,9 @@
 from __future__ import annotations
-from typing import Optional, List, Union, Literal
+from typing import Optional, List, Tuple, Union, Literal
 
 import torch
 from torch import nn, Tensor
+import torch.nn.functional as F
 
 from .embedding import ColEmbedding
 from .interaction import RowInteraction
@@ -148,6 +149,19 @@ class TabICL(nn.Module):
 
     recompute : bool, default=False
         If True, uses gradient checkpointing to save memory at the cost of additional computation.
+
+    col_missing_aware : bool, default=False
+        If True, the column embedder accepts ``NaN`` cells as missing values: missing cells
+        are hidden from the inducing-point attention, a missing indicator is projected into
+        the input, and a learned absence vector is added to their embeddings. The extra
+        parameters start at zero, so complete data gives the same output as with False.
+        Released checkpoints were trained without this flag.
+
+    reconstruction : bool, default=False
+        If True, adds a reconstruction head on the per-feature token outputs of the
+        row-wise interaction. During pre-training, hidden cells are reconstructed from
+        the rest of the row (see :meth:`reconstruction_loss`). The head is unused at
+        inference. Requires ``col_missing_aware=True`` because hidden cells are fed as NaN.
     """
 
     def __init__(
@@ -198,9 +212,13 @@ class TabICL(nn.Module):
         bias_free_ln: bool = False,
         zero_init: bool = True,
         recompute: bool = False,
+        col_missing_aware: bool = False,
+        reconstruction: bool = False,
     ):
         super().__init__()
         icl_dim = embed_dim * row_num_cls  # CLS tokens are concatenated for ICL
+        if reconstruction and not col_missing_aware:
+            raise ValueError("reconstruction=True requires col_missing_aware=True (hidden cells are fed as NaN).")
 
         # Determine task type
         if max_classes == 0:  # Regression
@@ -236,6 +254,8 @@ class TabICL(nn.Module):
         self.norm_first = norm_first
         self.bias_free_ln = bias_free_ln
         self.zero_init = zero_init
+        self.col_missing_aware = col_missing_aware
+        self.reconstruction = reconstruction
 
         self.col_embedder = ColEmbedding(
             embed_dim=embed_dim,
@@ -256,6 +276,7 @@ class TabICL(nn.Module):
             ssmax=col_ssmax,
             zero_init=zero_init,
             recompute=recompute,
+            missing_aware=col_missing_aware,
         )
 
         self.row_interactor = RowInteraction(
@@ -290,8 +311,41 @@ class TabICL(nn.Module):
             recompute=recompute,
         )
 
+        if reconstruction:
+            # One value per cell of a feature group (or per feature when not grouping)
+            self.recon_head = nn.Linear(embed_dim, col_feature_group_size if col_feature_group else 1)
+
         # KV cache for efficient inference
         self._cache: Optional[TabICLCache] = None
+
+    def load_pretrained_state_dict(self, state_dict) -> List[str]:
+        """Load weights, tolerating only the missing-aware parameters being absent.
+
+        A checkpoint trained without ``col_missing_aware`` can be loaded into a model
+        with the flag on: ``mask_linear`` and ``absence`` stay at zero, which reproduces
+        the checkpointed model exactly on complete data. Any other mismatch raises.
+
+        Parameters
+        ----------
+        state_dict : dict
+            Model state to load.
+
+        Returns
+        -------
+        List[str]
+            Names of the missing-aware parameters that were not in the checkpoint.
+        """
+        missing, unexpected = self.load_state_dict(state_dict, strict=False)
+        kept = sorted(
+            k for k in missing if ".mask_linear." in k or k.endswith(".absence") or k.startswith("recon_head.")
+        )
+        other_missing = sorted(set(missing) - set(kept))
+        if unexpected or other_missing:
+            raise RuntimeError(
+                f"Checkpoint does not match the model. Missing keys: {other_missing}. "
+                f"Unexpected keys: {sorted(unexpected)}."
+            )
+        return kept
 
     @property
     def has_cache(self) -> bool:
@@ -302,9 +356,47 @@ class TabICL(nn.Module):
         """Clear the stored cache."""
         self._cache = None
 
+    def reconstruction_loss(self, tokens: Tensor, X_target: Tensor, recon_mask: Tensor) -> Tensor:
+        """Smooth-L1 loss of the reconstruction head on hidden cells.
+
+        Parameters
+        ----------
+        tokens : Tensor
+            Per-feature token outputs of shape (B, T, G, E) returned by the row-wise
+            interaction with ``return_tokens=True``.
+
+        X_target : Tensor
+            Original features of shape (B, T, H), before the reconstruction cells were
+            hidden. Cells that were missing in the original table are NaN and are never
+            part of the loss.
+
+        recon_mask : Tensor
+            Boolean tensor of shape (B, T, H). True marks cells that were hidden for
+            reconstruction. Must be a subset of the observed cells of ``X_target``.
+
+        Returns
+        -------
+        Tensor
+            Scalar loss. Zero if no cell is hidden.
+        """
+        assert self.reconstruction, "reconstruction_loss requires reconstruction=True"
+        grouping = self.col_embedder.feature_grouping
+        target = grouping(X_target)  # (B, T, G, S)
+        mask = grouping(recon_mask.to(X_target.dtype)) > 0.5  # (B, T, G, S)
+        mask = mask & ~torch.isnan(target)
+        if not mask.any():
+            return tokens.new_zeros(())
+        pred = self.recon_head(tokens).to(target.dtype)  # (B, T, G, S)
+        return F.smooth_l1_loss(pred[mask], target[mask])
+
     def _train_forward(
-        self, X: Tensor, y_train: Tensor, d: Optional[Tensor] = None, embed_with_test: bool = False
-    ) -> Tensor:
+        self,
+        X: Tensor,
+        y_train: Tensor,
+        d: Optional[Tensor] = None,
+        embed_with_test: bool = False,
+        return_tokens: bool = False,
+    ) -> Union[Tensor, Tuple[Tensor, Tensor]]:
         """Column-wise embedding -> row-wise interaction -> dataset-wise in-context learning for training.
 
         Parameters
@@ -353,10 +445,15 @@ class TabICL(nn.Module):
                 embed_with_test=embed_with_test,
             ),
             d=d,
+            return_tokens=return_tokens,
         )
+        tokens = None
+        if return_tokens:
+            representations, tokens = representations
 
         # Dataset-wise in-context learning
-        return self.icl_predictor(representations, y_train=y_train)
+        pred = self.icl_predictor(representations, y_train=y_train)
+        return (pred, tokens) if return_tokens else pred
 
     def _inference_forward(
         self,
@@ -451,7 +548,8 @@ class TabICL(nn.Module):
         return_logits: bool = True,
         softmax_temperature: float = 0.9,
         inference_config: Optional[InferenceConfig] = None,
-    ) -> Tensor:
+        return_tokens: bool = False,
+    ) -> Union[Tensor, Tuple[Tensor, Tensor]]:
         """Column-wise embedding -> row-wise interaction -> dataset-wise in-context learning.
 
         Parameters
@@ -488,6 +586,10 @@ class TabICL(nn.Module):
         inference_config : Optional[InferenceConfig], default=None
             Inference configuration. Used only in inference mode.
 
+        return_tokens : bool, default=False
+            If True (training mode only), also return the per-feature token outputs of the
+            row-wise interaction, shape (B, T, G, E), for :meth:`reconstruction_loss`.
+
         Returns
         -------
         Tensor
@@ -507,7 +609,9 @@ class TabICL(nn.Module):
         """
 
         if self.training:
-            out = self._train_forward(X, y_train, d=d, embed_with_test=embed_with_test)
+            out = self._train_forward(
+                X, y_train, d=d, embed_with_test=embed_with_test, return_tokens=return_tokens
+            )
         else:
             out = self._inference_forward(
                 X,

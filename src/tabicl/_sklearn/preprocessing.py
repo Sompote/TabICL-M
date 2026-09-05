@@ -23,7 +23,10 @@ from sklearn.preprocessing import (
 )
 from sklearn.utils.validation import check_is_fitted
 
-from .sklearn_utils import validate_data
+from .sklearn_utils import validate_data, nan_check_params
+
+# check_array keyword that lets NaN through; all transformers below are NaN-tolerant
+_NAN_OK = nan_check_params()
 
 
 class RecursionLimitManager:
@@ -66,6 +69,12 @@ class TransformToNumerical(TransformerMixin, BaseEstimator):
     verbose : bool, default=False
         Whether to print information about column classifications.
 
+    impute : bool, default=True
+        If True, numeric NaN values are mean-imputed and categorical NaN values are
+        encoded as -1. If False, NaN values are kept as NaN in both numeric and
+        categorical columns, for models that handle missing values natively
+        (``col_missing_aware=True``).
+
     Attributes
     ----------
     tfm_ : ColumnTransformer or FunctionTransformer
@@ -77,8 +86,9 @@ class TransformToNumerical(TransformerMixin, BaseEstimator):
           through unchanged.
     """
 
-    def __init__(self, verbose: bool = False):
+    def __init__(self, verbose: bool = False, impute: bool = True):
         self.verbose = verbose
+        self.impute = impute
 
     def fit(self, X, y=None):
         """Configure transformers for different column types in the input data.
@@ -98,10 +108,17 @@ class TransformToNumerical(TransformerMixin, BaseEstimator):
             Returns self.
         """
 
-        cat_tfm = OrdinalEncoder(
-            dtype=np.int64, handle_unknown="use_encoded_value", unknown_value=-1, encoded_missing_value=-1
-        )
-        num_tfm = SimpleImputer(keep_empty_features=True)
+        if self.impute:
+            cat_tfm = OrdinalEncoder(
+                dtype=np.int64, handle_unknown="use_encoded_value", unknown_value=-1, encoded_missing_value=-1
+            )
+            num_tfm = SimpleImputer(keep_empty_features=True)
+        else:
+            # Keep NaN: the model treats it as a missing value.
+            cat_tfm = OrdinalEncoder(
+                dtype=np.float64, handle_unknown="use_encoded_value", unknown_value=-1, encoded_missing_value=np.nan
+            )
+            num_tfm = FunctionTransformer(lambda Z: np.asarray(Z, dtype=np.float64))
 
         if not hasattr(X, "columns"):  # proxy way to check whether X is a dataframe without importing pandas
             # no dataframe, so we can't do column-wise transformations. Instead, we check if it's already numeric and if not, raise an error.
@@ -231,7 +248,7 @@ class UniqueFeatureFilter(TransformerMixin, BaseEstimator):
         self : object
             Returns self.
         """
-        X = validate_data(self, X)
+        X = validate_data(self, X, **_NAN_OK)
 
         # If there are very few samples, keep all features
         if X.shape[0] <= self.threshold:
@@ -267,7 +284,7 @@ class UniqueFeatureFilter(TransformerMixin, BaseEstimator):
             Transformed array with selected features.
         """
         check_is_fitted(self)
-        X = validate_data(self, X, reset=False)
+        X = validate_data(self, X, reset=False, **_NAN_OK)
 
         return X[:, self.features_to_keep_]
 
@@ -328,7 +345,7 @@ class OutlierRemover(TransformerMixin, BaseEstimator):
         self : OutlierRemover
             Returns self.
         """
-        X = validate_data(self, X)
+        X = validate_data(self, X, **_NAN_OK)
 
         # First stage: Identify outliers using initial statistics
         self.means_ = np.nanmean(X, axis=0)
@@ -387,7 +404,7 @@ class OutlierRemover(TransformerMixin, BaseEstimator):
             Transformed array with clipped values.
         """
         check_is_fitted(self)
-        X = validate_data(self, X, reset=False)
+        X = validate_data(self, X, reset=False, **_NAN_OK)
         X = np.maximum(-np.log1p(np.abs(X)) + self.lower_bounds_, X)
         X = np.minimum(np.log1p(np.abs(X)) + self.upper_bounds_, X)
 
@@ -448,10 +465,10 @@ class CustomStandardScaler(TransformerMixin, BaseEstimator):
             # If X is a 1D array, reshape it to 2D
             X = X.reshape(-1, 1)
 
-        X = validate_data(self, X)
+        X = validate_data(self, X, **_NAN_OK)
 
-        self.mean_ = np.mean(X, axis=0)
-        self.scale_ = np.std(X, axis=0) + self.epsilon
+        self.mean_ = np.nanmean(X, axis=0)
+        self.scale_ = np.nanstd(X, axis=0) + self.epsilon
 
         return self
 
@@ -475,7 +492,7 @@ class CustomStandardScaler(TransformerMixin, BaseEstimator):
             is_vector = False
 
         check_is_fitted(self)
-        X = validate_data(self, X, reset=False)
+        X = validate_data(self, X, reset=False, **_NAN_OK)
 
         X_scaled = (X - self.mean_) / self.scale_
         X_clipped = np.clip(X_scaled, self.clip_min, self.clip_max)
@@ -502,7 +519,7 @@ class CustomStandardScaler(TransformerMixin, BaseEstimator):
             is_vector = False
 
         check_is_fitted(self)
-        X = validate_data(self, X, reset=False)
+        X = validate_data(self, X, reset=False, **_NAN_OK)
         X_out = X * self.scale_ + self.mean_
 
         return X_out.reshape(-1) if is_vector else X_out
@@ -637,7 +654,7 @@ class RTDLQuantileTransformer(BaseEstimator, TransformerMixin):
         X_noisy : ndarray of shape (n_samples, n_features)
             The input data with added Gaussian noise.
         """
-        stds = np.std(X, axis=0, keepdims=True)
+        stds = np.nanstd(X, axis=0, keepdims=True)
         noise_std = self.noise / np.maximum(stds, self.noise)
         rng = np.random.default_rng(self.random_state)
         X_noisy = X + noise_std * rng.standard_normal(X.shape)
@@ -706,7 +723,7 @@ class PreprocessingPipeline(TransformerMixin, BaseEstimator):
         self : PreprocessingPipeline
             Returns self.
         """
-        X = validate_data(self, X)
+        X = validate_data(self, X, **_NAN_OK)
         if hasattr(X, "dtype") and X.dtype == np.float16:
             X = X.astype(np.float32)
 
@@ -735,8 +752,8 @@ class PreprocessingPipeline(TransformerMixin, BaseEstimator):
             else:
                 raise ValueError(f"Unknown normalization method: {self.normalization_method}")
 
-            self.X_min_ = np.min(X_scaled, axis=0, keepdims=True)
-            self.X_max_ = np.max(X_scaled, axis=0, keepdims=True)
+            self.X_min_ = np.nanmin(X_scaled, axis=0, keepdims=True)
+            self.X_max_ = np.nanmax(X_scaled, axis=0, keepdims=True)
             X_normalized = self.normalizer_.fit_transform(X_scaled)
         else:
             self.normalizer_ = None
@@ -762,7 +779,7 @@ class PreprocessingPipeline(TransformerMixin, BaseEstimator):
             Preprocessed data.
         """
         check_is_fitted(self)
-        X = validate_data(self, X, reset=False, copy=True)
+        X = validate_data(self, X, reset=False, copy=True, **_NAN_OK)
         if hasattr(X, "dtype") and X.dtype == np.float16:
             X = X.astype(np.float32)
         # Standard scaling
@@ -1045,7 +1062,7 @@ class EnsembleGenerator(TransformerMixin, BaseEstimator):
         self : EnsembleGenerator
             Fitted generator.
         """
-        validate_data(self, X, y)
+        validate_data(self, X, y, **_NAN_OK)
 
         if self.norm_methods is None:
             self.norm_methods_ = ["none", "power"]

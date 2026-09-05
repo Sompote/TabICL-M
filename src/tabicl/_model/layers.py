@@ -622,7 +622,9 @@ class InducedSelfAttentionBlock(nn.Module):
         self.ind_vectors = nn.Parameter(torch.empty(num_inds, d_model))
         nn.init.trunc_normal_(self.ind_vectors, std=0.02)
 
-    def induced_attention(self, src: Tensor, train_size: Optional[int] = None) -> Tensor:
+    def induced_attention(
+        self, src: Tensor, train_size: Optional[int] = None, key_padding_mask: Optional[Tensor] = None
+    ) -> Tensor:
         """Apply induced self-attention to input sequence.
 
         Parameters
@@ -632,6 +634,11 @@ class InducedSelfAttentionBlock(nn.Module):
 
         train_size : Optional[int], default=None
             Position to split the input into training and test data.
+
+        key_padding_mask : Optional[Tensor], default=None
+            Boolean mask of shape (..., seq_len). True marks elements that the inducing
+            points must not attend to in the first attention stage (for example, missing
+            cells). Masked elements still receive an output from the second stage.
 
         Returns
         -------
@@ -643,15 +650,19 @@ class InducedSelfAttentionBlock(nn.Module):
         ind_vectors = self.ind_vectors.expand(*batch_shape, self.num_inds, d_model)
 
         if train_size is None:
-            hidden = self.multihead_attn1(ind_vectors, src, src)
+            keys = src
+            kpm = key_padding_mask
         else:
-            hidden = self.multihead_attn1(ind_vectors, src[..., :train_size, :], src[..., :train_size, :])
-
+            keys = src[..., :train_size, :]
+            kpm = key_padding_mask[..., :train_size] if key_padding_mask is not None else None
+        hidden = self.multihead_attn1(ind_vectors, keys, keys, key_padding_mask=kpm)
         out = self.multihead_attn2(src, hidden, hidden)
 
         return out
 
-    def forward(self, src: Tensor, train_size: Optional[int] = None) -> Tensor:
+    def forward(
+        self, src: Tensor, train_size: Optional[int] = None, key_padding_mask: Optional[Tensor] = None
+    ) -> Tensor:
         """Apply induced self-attention to input sequence.
 
         Parameters
@@ -663,6 +674,10 @@ class InducedSelfAttentionBlock(nn.Module):
             Position to split the input into training and test data. When provided,
             inducing points will only attend to training data in the first attention
             stage to prevent information leakage from test data during evaluation.
+
+        key_padding_mask : Optional[Tensor], default=None
+            Boolean mask of shape (..., seq_len). True marks elements excluded from the
+            keys of the first attention stage.
 
         Returns
         -------
@@ -676,10 +691,11 @@ class InducedSelfAttentionBlock(nn.Module):
                 out = torch.full_like(src, self.skip_value)
             else:
                 out = torch.empty_like(src)
-                out[~skip_mask] = self.induced_attention(src[~skip_mask], train_size)
+                kpm = key_padding_mask[~skip_mask] if key_padding_mask is not None else None
+                out[~skip_mask] = self.induced_attention(src[~skip_mask], train_size, kpm)
                 out[skip_mask] = self.skip_value
         else:
-            out = self.induced_attention(src, train_size)
+            out = self.induced_attention(src, train_size, key_padding_mask)
 
         return out
 
@@ -691,6 +707,7 @@ class InducedSelfAttentionBlock(nn.Module):
         train_size: Optional[int] = None,
         use_cache: bool = False,
         store_cache: bool = True,
+        key_padding_mask: Optional[Tensor] = None,
     ) -> Tensor:
         """Apply induced self-attention with optional caching.
 
@@ -731,7 +748,9 @@ class InducedSelfAttentionBlock(nn.Module):
 
         if store_cache:
             assert train_size is not None, "train_size must be provided when store_cache=True"
-            hidden = self.multihead_attn1(ind_vectors, src[..., :train_size, :], src[..., :train_size, :])
+            keys = src[..., :train_size, :]
+            kpm = key_padding_mask[..., :train_size] if key_padding_mask is not None else None
+            hidden = self.multihead_attn1(ind_vectors, keys, keys, key_padding_mask=kpm)
             out, k_proj, v_proj = self.multihead_attn2(src, hidden, hidden, need_kv=True)
             col_cache.kv[block_idx] = KVCacheEntry(key=k_proj, value=v_proj)
 
@@ -745,6 +764,7 @@ class InducedSelfAttentionBlock(nn.Module):
         train_size: Optional[int] = None,
         use_cache: bool = False,
         store_cache: bool = True,
+        key_padding_mask: Optional[Tensor] = None,
     ) -> Tensor:
         """Apply induced self-attention with optional caching, handling skip values.
 
@@ -788,7 +808,9 @@ class InducedSelfAttentionBlock(nn.Module):
         if skip_mask.all():
             return torch.full_like(src, self.skip_value)
         else:
-            out = self.induced_attention_with_cache(src, col_cache, block_idx, train_size, use_cache, store_cache)
+            out = self.induced_attention_with_cache(
+                src, col_cache, block_idx, train_size, use_cache, store_cache, key_padding_mask
+            )
             # Restore skip values in output
             if skip_mask.any():
                 out[skip_mask] = self.skip_value

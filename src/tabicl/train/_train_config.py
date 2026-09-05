@@ -3,6 +3,7 @@
 import argparse
 
 from tabicl.prior.graph_lib._config import PriorConfig
+from tabicl.prior._missingness import MissingnessConfig
 
 
 def str2bool(value):
@@ -286,6 +287,27 @@ def build_parser():
     parser.add_argument("--freeze_col", default=False, type=str2bool, help="Whether to freeze the column embedder")
 
     # Row Interaction Config
+    parser.add_argument(
+        "--col_missing_aware",
+        default=False,
+        type=str2bool,
+        help="If True, the column embedder accepts NaN cells as missing values (hidden from inducing-point "
+        "attention, missing indicator on the input, learned absence vector on the output). Use together with "
+        "--missing_enabled. New parameters start at zero, so a checkpoint trained without it can be loaded.",
+    )
+    parser.add_argument(
+        "--recon_weight",
+        type=float,
+        default=0.0,
+        help="Weight of the masked-cell reconstruction loss. If > 0, the model gets a reconstruction head on the "
+        "row-wise feature tokens and a fraction of observed cells is hidden each step. Requires --col_missing_aware.",
+    )
+    parser.add_argument(
+        "--recon_rate_max", type=float, default=0.3, help="Upper bound of the per-table fraction of cells hidden"
+    )
+    parser.add_argument(
+        "--recon_p_apply", type=float, default=0.5, help="Probability that a table receives hidden cells"
+    )
     parser.add_argument("--row_num_blocks", type=int, default=3, help="Number of blocks in row interactor")
     parser.add_argument("--row_nhead", type=int, default=8, help="Number of attention heads in row interactor")
     parser.add_argument("--row_num_cls", type=int, default=4, help="Number of CLS tokens in row interactor")
@@ -375,5 +397,12 @@ def build_parser():
     # --max_n_nodes, --cauchy_dag_offset, ...) using the same names as the standalone generator.
     # These are only used when --prior_type graph_scm and on-the-fly generation is enabled.
     PriorConfig.add_args_to_parser(parser)
+
+    ###########################################################################
+    ###### Missingness prior config ###########################################
+    ###########################################################################
+    # Block-structured (multi-source) and cell-wise missingness applied to prior tables.
+    # Disabled by default. Requires a model that accepts NaN inputs.
+    MissingnessConfig.add_args_to_parser(parser)
 
     return parser

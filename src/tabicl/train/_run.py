@@ -27,6 +27,8 @@ from tabicl._model.attention import HAS_FLASH_ATTN3, set_flash_attn3_enabled
 from tabicl.prior._dataset import PriorDataset
 from tabicl.prior._genload import LoadPriorDataset, seed_worker
 from tabicl.prior.graph_lib._config import PriorConfig
+from tabicl.prior._missingness import MissingnessConfig
+from tabicl.train._reconstruction import sample_reconstruction_mask, hide_cells
 from tabicl.train._optim import get_scheduler
 from tabicl.train._muon import Muon
 from tabicl.train._train_config import build_parser
@@ -233,7 +235,12 @@ class Trainer:
             "bias_free_ln": bias_free_ln,
             "zero_init": self.config.zero_init,
             "recompute": self.config.recompute,
+            "col_missing_aware": self.config.col_missing_aware,
+            "reconstruction": self.config.recon_weight > 0,
         }
+        self.use_reconstruction = self.config.recon_weight > 0
+        if self.use_reconstruction and not self.config.col_missing_aware:
+            raise ValueError("--recon_weight > 0 requires --col_missing_aware true (hidden cells are fed as NaN).")
 
         model = TabICL(**self.model_config)
         model.to(device=self.config.device)
@@ -294,6 +301,7 @@ class Trainer:
                 replay_small=self.config.replay_small,
                 prior_type=self.config.prior_type,
                 config=PriorConfig.from_args(self.config),  # graph_scm prior options
+                missingness=MissingnessConfig.from_args(self.config),
                 device=self.config.prior_device,
                 n_jobs=1,  # Set to 1 to avoid nested parallelism; the DataLoader parallelizes across batches
             )
@@ -432,6 +440,14 @@ class Trainer:
             print(f"Error parsing checkpoint filenames: {e}")
             return None
 
+    def _load_model_state(self, state_dict):
+        """Load model weights. Continued pre-training from a checkpoint trained without
+        ``col_missing_aware`` keeps the new parameters at zero (see
+        :meth:`TabICL.load_pretrained_state_dict`)."""
+        kept = self.raw_model.load_pretrained_state_dict(state_dict)
+        if kept:
+            print(f"Missing-aware parameters not in checkpoint, kept at zero: {kept}")
+
     def load_checkpoint(self):
         """Load model and training state from checkpoint.
 
@@ -456,7 +472,7 @@ class Trainer:
         if "state_dict" not in checkpoint:
             raise ValueError("Checkpoint does not contain model state")
 
-        self.raw_model.load_state_dict(checkpoint["state_dict"])
+        self._load_model_state(checkpoint["state_dict"])
 
         # Optionally load optimizer and scheduler state
         if self.config.only_load_model:
@@ -705,21 +721,40 @@ class Trainer:
         # variable-feature priors (e.g. graph_scm).
         model_d = None if self.config.ignore_d else micro_d
 
+        # Masked-cell reconstruction: hide observed cells, feed NaN, reconstruct from the row.
+        recon_mask = None
+        X_in = micro_X
+        if self.use_reconstruction:
+            recon_mask = sample_reconstruction_mask(
+                micro_X, micro_d, rate_max=self.config.recon_rate_max, p_apply=self.config.recon_p_apply
+            )
+            X_in = hide_cells(micro_X, recon_mask)
+
         with self.amp_ctx, self._sdpa_ctx():
             if self.regression:
                 # (B, test_size, num_quantiles) predicted quantiles at levels
                 # linspace(0, 1, num_quantiles + 2)[1:-1] (matches inference / QuantileDistribution)
-                pred = self.model(micro_X, y_train, model_d)
+                pred = self.model(X_in, y_train, model_d, return_tokens=self.use_reconstruction)
+                if self.use_reconstruction:
+                    pred, tokens = pred
                 alphas = torch.linspace(
                     0.0, 1.0, self.config.num_quantiles + 2, device=pred.device, dtype=pred.dtype
                 )[1:-1].view(1, 1, -1)
                 errors = y_test.unsqueeze(-1) - pred
                 loss = torch.maximum(alphas * errors, (alphas - 1) * errors).mean()
             else:
-                pred = self.model(micro_X, y_train, model_d)  # (B, test_size, max_classes)
-                pred = pred.flatten(end_dim=-2)
+                pred = self.model(X_in, y_train, model_d, return_tokens=self.use_reconstruction)
+                if self.use_reconstruction:
+                    pred, tokens = pred
+                pred = pred.flatten(end_dim=-2)  # (B * test_size, max_classes)
                 true = y_test.long().flatten()
                 loss = F.cross_entropy(pred, true)
+
+            task_loss = loss
+            recon_loss = None
+            if self.use_reconstruction:
+                recon_loss = self.raw_model.reconstruction_loss(tokens, micro_X, recon_mask)
+                loss = task_loss + self.config.recon_weight * recon_loss
 
         # Scale loss for gradient accumulation and backpropagate
         scaled_loss = loss / num_micro_batches
@@ -728,12 +763,13 @@ class Trainer:
         with torch.no_grad():
             micro_results = {}
             if self.regression:
-                micro_results["pinball"] = scaled_loss.item()
+                micro_results["pinball"] = task_loss.item() / num_micro_batches
             else:
-                micro_results["ce"] = scaled_loss.item()
+                micro_results["ce"] = task_loss.item() / num_micro_batches
                 accuracy = (pred.argmax(dim=1) == true).sum() / len(true)
                 micro_results["accuracy"] = accuracy.item() / num_micro_batches
-
+            if recon_loss is not None:
+                micro_results["recon"] = recon_loss.item() / num_micro_batches
         return micro_results
 
     def run_batch(self, batch):
@@ -772,6 +808,8 @@ class Trainer:
         micro_batches = list(zip(*micro_batches))
 
         results = {"pinball": 0.0} if self.regression else {"ce": 0.0, "accuracy": 0.0}
+        if self.use_reconstruction:
+            results["recon"] = 0.0
         failed_batches = 0
 
         for idx, micro_batch in enumerate(micro_batches):

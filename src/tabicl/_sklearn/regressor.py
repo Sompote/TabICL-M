@@ -419,7 +419,10 @@ class TabICLRegressor(RegressorMixin, TabICLBaseEstimator):
         y_scaled = self.y_scaler_.fit_transform(y.reshape(-1, 1)).flatten()
 
         # Transform input features
-        self.X_encoder_ = TransformToNumerical(verbose=self.verbose)
+        # A missing-aware model receives NaN directly; otherwise NaN is imputed.
+        self.X_encoder_ = TransformToNumerical(
+            verbose=self.verbose, impute=not getattr(self.model_, "col_missing_aware", False)
+        )
         X = self.X_encoder_.fit_transform(X)
 
         # Fit ensemble generator to create multiple dataset views

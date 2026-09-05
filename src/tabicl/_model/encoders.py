@@ -309,7 +309,9 @@ class SetTransformer(nn.Module):
         )
         self.recompute = recompute
 
-    def forward(self, src: Tensor, train_size: Optional[int] = None) -> Tensor:
+    def forward(
+        self, src: Tensor, train_size: Optional[int] = None, key_padding_mask: Optional[Tensor] = None
+    ) -> Tensor:
         """Process input through the stacked blocks.
 
         Parameters
@@ -322,6 +324,10 @@ class SetTransformer(nn.Module):
             inducing points will only attend to training data in the first attention
             stage of induced self-attention blocks to prevent information leakage.
 
+        key_padding_mask : Optional[Tensor], default=None
+            Boolean mask of shape (..., seq_len). True marks elements (for example,
+            missing cells) that inducing points must not attend to.
+
         Returns
         -------
         Tensor
@@ -330,9 +336,13 @@ class SetTransformer(nn.Module):
         out = src
         for block in self.blocks:
             if self.recompute:
-                out = checkpoint(partial(block, train_size=train_size), out, use_reentrant=False)
+                out = checkpoint(
+                    partial(block, train_size=train_size, key_padding_mask=key_padding_mask),
+                    out,
+                    use_reentrant=False,
+                )
             else:
-                out = block(out, train_size)
+                out = block(out, train_size, key_padding_mask)
 
         return out
 
@@ -343,6 +353,7 @@ class SetTransformer(nn.Module):
         train_size: Optional[int] = None,
         use_cache: bool = False,
         store_cache: bool = True,
+        key_padding_mask: Optional[Tensor] = None,
     ) -> Tensor:
         """Process input through the stacked ISAB blocks with KV caching support.
 
@@ -398,6 +409,8 @@ class SetTransformer(nn.Module):
 
         out = src
         for block_idx, block in enumerate(self.blocks):
-            out = block.forward_with_cache(out, col_cache, block_idx, train_size, use_cache, store_cache)
+            out = block.forward_with_cache(
+                out, col_cache, block_idx, train_size, use_cache, store_cache, key_padding_mask
+            )
 
         return out

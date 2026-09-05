@@ -117,6 +117,21 @@ class ColEmbedding(nn.Module):
 
     recompute : bool, default=False
         If True, uses gradient checkpointing to save memory at the cost of additional computation.
+
+    missing_aware : bool, default=False
+        If True, the embedding accepts ``NaN`` cells and treats them as missing:
+
+        1. Missing cells are zero-filled before the input projection, and a binary
+           missing indicator is projected by ``mask_linear`` and added to the input.
+        2. Tokens whose cells are all missing are excluded from the keys of the
+           inducing-point attention, so column statistics are computed from observed
+           cells only. Masked tokens still receive an output from the second stage.
+        3. A learned absence vector (one per input dimension) is added to the final
+           embedding of every missing cell.
+
+        ``mask_linear`` and the absence vector are initialised at zero, so a model
+        with this flag reproduces the original model exactly on complete data.
+        If False, ``NaN`` inputs are not supported.
     """
 
     def __init__(
@@ -140,6 +155,7 @@ class ColEmbedding(nn.Module):
         zero_init: bool = True,
         mixed_radix_ensemble: bool = True,
         recompute: bool = False,
+        missing_aware: bool = False,
     ) -> None:
         super().__init__()
         self.embed_dim = embed_dim
@@ -150,7 +166,16 @@ class ColEmbedding(nn.Module):
         self.max_classes = max_classes
         self.affine = affine
         self.mixed_radix_ensemble = mixed_radix_ensemble
-        self.in_linear = SkippableLinear(feature_group_size if feature_group else 1, embed_dim)
+        self.missing_aware = missing_aware
+        in_dim = feature_group_size if feature_group else 1
+        self.in_linear = SkippableLinear(in_dim, embed_dim)
+
+        if missing_aware:
+            # Input-side missing indicator and output-side absence vector, both zero-initialised
+            # so that complete data yields exactly the same embeddings as without them.
+            self.mask_linear = nn.Linear(in_dim, embed_dim, bias=False)
+            nn.init.zeros_(self.mask_linear.weight)
+            self.absence = nn.Parameter(torch.zeros(in_dim, embed_dim))
 
         self.tf_col = SetTransformer(
             num_blocks=num_blocks,
@@ -337,6 +362,60 @@ class ColEmbedding(nn.Module):
 
         return (y.long() // divisor) % bases[digit_idx]
 
+    def _split_missing(self, features: Tensor) -> tuple[Tensor, Optional[Tensor]]:
+        """Separate observed values from the missing indicator.
+
+        Parameters
+        ----------
+        features : Tensor
+            Input features of shape (..., T, in_dim), possibly containing ``NaN``.
+
+        Returns
+        -------
+        features : Tensor
+            Same shape, with missing cells zero-filled. Unchanged if the module is not
+            missing-aware or no cell is missing.
+
+        missing : Optional[Tensor]
+            Boolean tensor of shape (..., T, in_dim), True at missing cells. ``None`` if
+            the module is not missing-aware or no cell is missing.
+        """
+        if not self.missing_aware:
+            return features, None
+        missing = torch.isnan(features)
+        if not missing.any():
+            return features, None
+        return features.masked_fill(missing, 0.0), missing
+
+    def _project_inputs(self, features: Tensor, missing: Optional[Tensor]) -> Tensor:
+        """Input projection with the optional missing indicator added."""
+        src = self.in_linear(features)
+        if missing is not None:
+            src = src + self.mask_linear(missing.to(src.dtype))
+        return src
+
+    def _key_padding_mask(
+        self, missing: Optional[Tensor], train_size: Optional[int], embed_with_test: bool
+    ) -> Optional[Tensor]:
+        """Key padding mask that hides fully missing tokens from the inducing points.
+
+        A token is hidden when every cell of its feature group is missing. If all keys
+        of a column would be hidden, the mask is dropped for that column so that the
+        attention stays well defined.
+        """
+        if missing is None:
+            return None
+        kpm = missing.all(dim=-1)  # (..., T)
+        keys = kpm if (embed_with_test or train_size is None) else kpm[..., :train_size]
+        kpm = kpm & ~keys.all(dim=-1, keepdim=True)
+        return kpm if kpm.any() else None
+
+    def _add_absence(self, embeddings: Tensor, missing: Optional[Tensor]) -> Tensor:
+        """Add the learned absence vector to the embedding of every missing cell."""
+        if missing is None:
+            return embeddings
+        return embeddings + missing.to(embeddings.dtype) @ self.absence.to(embeddings.dtype)
+
     def _compute_embeddings(
         self, features: Tensor, train_size: int, y_train: Optional[Tensor] = None, embed_with_test: bool = False
     ) -> Tensor:
@@ -369,10 +448,12 @@ class ColEmbedding(nn.Module):
             Embeddings of shape (..., T, E) where E is the embedding dimension.
         """
 
-        src = self.in_linear(features)  # (..., T, in_dim) -> (..., T, E)
+        features, missing = self._split_missing(features)
+        src = self._project_inputs(features, missing)  # (..., T, in_dim) -> (..., T, E)
+        kpm = self._key_padding_mask(missing, train_size, embed_with_test)
 
         if not self.target_aware:
-            src = self.tf_col(src, train_size=None if embed_with_test else train_size)
+            src = self.tf_col(src, train_size=None if embed_with_test else train_size, key_padding_mask=kpm)
         else:
             assert y_train is not None, "y_train must be provided when target_aware=True."
 
@@ -387,7 +468,7 @@ class ColEmbedding(nn.Module):
                 else:
                     y_emb = self.y_encoder(y_train.unsqueeze(-1))
                 src[..., :train_size, :] = src[..., :train_size, :] + y_emb
-                src = self.tf_col(src, train_size=None if embed_with_test else train_size)
+                src = self.tf_col(src, train_size=None if embed_with_test else train_size, key_padding_mask=kpm)
             else:
                 # Mixed-radix ensembling for many-class classification
                 if not self.mixed_radix_ensemble:
@@ -407,7 +488,9 @@ class ColEmbedding(nn.Module):
                     y_digit = self._extract_mixed_radix_digit(y_train, digit_idx, bases)
                     y_emb = self.y_encoder(y_digit.float())
                     src_with_y[..., :train_size, :] = src[..., :train_size, :] + y_emb
-                    src_accum = src_accum + self.tf_col(src_with_y, train_size=None if embed_with_test else train_size)
+                    src_accum = src_accum + self.tf_col(
+                        src_with_y, train_size=None if embed_with_test else train_size, key_padding_mask=kpm
+                    )
 
                 src = src_accum / num_digits
 
@@ -417,6 +500,7 @@ class ColEmbedding(nn.Module):
             embeddings = features * weights + biases
         else:
             embeddings = src
+        embeddings = self._add_absence(embeddings, missing)
 
         return embeddings
 
@@ -770,11 +854,19 @@ class ColEmbedding(nn.Module):
         Tensor
             Embeddings of shape (..., T, E).
         """
-        src = self.in_linear(features)
+        features, missing = self._split_missing(features)
+        src = self._project_inputs(features, missing)
+        # Keys of the first stage are the training rows; the mask only matters when storing.
+        kpm = self._key_padding_mask(missing, train_size, embed_with_test=False) if store_cache else None
 
         if not self.target_aware:
             src = self.tf_col.forward_with_cache(
-                src, col_cache=col_cache, train_size=train_size, use_cache=use_cache, store_cache=store_cache
+                src,
+                col_cache=col_cache,
+                train_size=train_size,
+                use_cache=use_cache,
+                store_cache=store_cache,
+                key_padding_mask=kpm,
             )
         else:
             # When using cache, skip y_train embedding — it's already baked
@@ -789,7 +881,12 @@ class ColEmbedding(nn.Module):
                 src[..., :train_size, :] = src[..., :train_size, :] + y_emb
 
             src = self.tf_col.forward_with_cache(
-                src, col_cache=col_cache, train_size=train_size, use_cache=use_cache, store_cache=store_cache
+                src,
+                col_cache=col_cache,
+                train_size=train_size,
+                use_cache=use_cache,
+                store_cache=store_cache,
+                key_padding_mask=kpm,
             )
 
         if self.affine:
@@ -798,6 +895,7 @@ class ColEmbedding(nn.Module):
             embeddings = features * weights + biases
         else:
             embeddings = src
+        embeddings = self._add_absence(embeddings, missing)
 
         return embeddings
 
