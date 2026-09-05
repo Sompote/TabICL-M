@@ -6,5 +6,6 @@ entry point is provided via ``python -m tabicl.prior``.
 """
 
 from ._dataset import PriorDataset
+from ._missingness import MissingnessConfig
 
-__all__ = ["PriorDataset"]
+__all__ = ["PriorDataset", "MissingnessConfig"]

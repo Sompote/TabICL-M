@@ -40,6 +40,7 @@ from torch.utils.data import IterableDataset, DataLoader
 
 from tabicl.prior._dataset import PriorDataset
 from tabicl.prior.graph_lib._config import PriorConfig
+from tabicl.prior._missingness import MissingnessConfig
 from tabicl.prior._prior_config import DEFAULT_FIXED_HP, DEFAULT_SAMPLED_HP
 
 warnings.filterwarnings(
@@ -500,6 +501,7 @@ class SavePriorDataset:
             replay_small=self.args.replay_small,
             prior_type=self.args.prior_type,
             config=PriorConfig.from_args(self.args),
+            missingness=MissingnessConfig.from_args(self.args),
             scm_fixed_hp=DEFAULT_FIXED_HP,
             scm_sampled_hp=DEFAULT_SAMPLED_HP,
             n_jobs=1,  # parallelize across batches instead of within batches
@@ -536,6 +538,7 @@ class SavePriorDataset:
             "max_train_size": self.args.max_train_size,
             "replay_small": self.args.replay_small,
             "graph_noise": self.args.graph_noise,
+            "missingness": MissingnessConfig.from_args(self.args).to_dict(),
         }
         with open(self.save_dir / "metadata.json", "w") as f:
             json.dump(metadata, f, indent=2)
@@ -682,6 +685,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--device", type=str, default="cpu", choices=["cpu", "cuda"], help="Device to use for generation"
     )
+
+    MissingnessConfig.add_args_to_parser(parser)
 
     args = parser.parse_args()
     # np.random.seed(args.np_seed)

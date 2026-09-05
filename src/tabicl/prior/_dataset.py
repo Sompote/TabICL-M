@@ -44,6 +44,7 @@ from ._graph_scm import GraphSCM
 from ._hp_sampling import HpSamplerList
 from ._reg2cls import Reg2Cls
 from ._prior_config import DEFAULT_FIXED_HP, DEFAULT_SAMPLED_HP
+from ._missingness import MissingnessConfig, MissingnessTransform
 
 warnings.filterwarnings(
     "ignore", message=".*The PyTorch API of nested tensors is in prototype stage.*", category=UserWarning
@@ -1323,6 +1324,11 @@ class PriorDataset(IterableDataset):
     config : PriorConfig | None, default=None
         Prior configuration when using 'graph_scm' prior_type
 
+    missingness : MissingnessConfig | None, default=None
+        Configuration of block-structured and cell-wise missingness applied to
+        every generated table after generation. Missing cells are written as NaN.
+        Disabled when None or when ``missingness.enabled`` is False.
+
     n_jobs : int, default=-1
         Number of parallel jobs to run (-1 means using all processors)
 
@@ -1354,11 +1360,13 @@ class PriorDataset(IterableDataset):
             scm_fixed_hp: Dict[str, Any] = DEFAULT_FIXED_HP,
             scm_sampled_hp: Dict[str, Any] = DEFAULT_SAMPLED_HP,
             config: Optional[PriorConfig] = None,
+            missingness: Optional[MissingnessConfig] = None,
             n_jobs: int = -1,
             num_threads_per_generate: int = 1,
             device: str = "cpu",
     ):
         super().__init__()
+        self.missingness = MissingnessTransform(missingness)
         if prior_type == "dummy":
             self.prior = DummyPrior(
                 regression=regression,
@@ -1459,6 +1467,8 @@ class PriorDataset(IterableDataset):
 
             2. For DummyPrior, random Gaussian values of (batch_size, seq_len, max_features).
 
+            If missingness is enabled, missing cells are NaN.
+
         y : Tensor or NestedTensor
             1. For SCM-based priors:
              - If seq_len_per_gp=False, shape is (batch_size, seq_len).
@@ -1475,7 +1485,10 @@ class PriorDataset(IterableDataset):
         train_sizes : Tensor
             Position for train/test split for each dataset of shape (batch_size,).
         """
-        return self.prior.get_batch(batch_size or self.batch_size)
+        X, y, d, seq_lens, train_sizes = self.prior.get_batch(batch_size or self.batch_size)
+        if self.missingness.enabled:
+            X, d = self.missingness(X, d, train_sizes)
+        return X, y, d, seq_lens, train_sizes
 
     def __iter__(self) -> "PriorDataset":
         """
