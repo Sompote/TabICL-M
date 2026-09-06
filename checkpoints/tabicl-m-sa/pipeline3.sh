@@ -17,7 +17,7 @@ for cfg in loso random_split; do
     split=source; [ $cfg = random_split ] && split=random
     log "broad $cfg tabicl"
     /venv/main/bin/python scripts/ablation_missingness.py --out results/broad/$cfg $COMMON --split $split \
-        --models tabicl_impute tabicl_aware tabicl_aware_ewt tabicl_aware_si catboost --aware_ckpt $CLF --aware_ckpt_reg $REG --device cuda \
+        --models tabicl_impute tabicl_aware catboost --aware_ckpt $CLF --aware_ckpt_reg $REG --device cuda \
         > results/broad/$cfg.log 2>&1; log "broad $cfg tabicl exit=$?"
     log "broad $cfg tabpfn"
     /venv/tabpfn25/bin/python scripts/ablation_missingness.py --out results/broad/tabpfn_$cfg $COMMON --split $split \
