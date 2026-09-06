@@ -7,7 +7,7 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(os.path.dirname(ROOT))
 names = {"openml:1590": "adult", "openml:31": "credit-g", "openml:531": "boston"}
 ORDER = ["tabicl_impute", "tabicl_indicator", "tabicl_patternnorm", "tabicl_iterimpute", "tabicl_knnimpute",
-         "tabicl_aware_zero", "tabicl_aware", "tabicl_m_sa", "tabpfn", "xgboost", "catboost"]
+         "tabicl_aware_zero", "tabicl_aware", "tabicl_m_sa", "tabpfn", "tabpfn25", "tabpfn26", "tabpfn3", "xgboost", "catboost"]
 
 def _read(path, rename=None):
     if not os.path.exists(path):
@@ -23,6 +23,9 @@ def load(cfg):
         _read(f"{REPO}/results/headroom/{cfg}/results.csv"),
         _read(f"{REPO}/results/headroom/tabpfn_{cfg}/results.csv"),
         _read(f"{REPO}/results/headroom/patternnorm_{cfg}/results.csv"),
+        _read(f"{REPO}/results/headroom/tabpfn25_{cfg}/results.csv"),
+        _read(f"{REPO}/results/headroom/tabpfn26_{cfg}/results.csv"),
+        _read(f"{REPO}/results/headroom/tabpfn3_{cfg}/results.csv"),
         _read(f"{ROOT}/{cfg}/results.csv", rename={"tabicl_aware": "tabicl_m_sa"}),
     ]
     parts = [p for p in parts if p is not None]
@@ -72,14 +75,14 @@ def paired(df, a, b, mechs=None):
 lines = ["# Source-aware TabICL-M against the baselines", "",
          "`tabicl_m_sa` = source-aware stage-4 checkpoint (`checkpoints/tabicl-m-sa/*/step-10000.ckpt`); "
          "`tabicl_aware` = first stage-4 checkpoint (3000 steps, value-level parts only); "
-         "`tabicl_impute` = released TabICLv2 with mean imputation; `tabpfn` = TabPFN v2. "
+         "`tabicl_impute` = released TabICLv2 with mean imputation; `tabpfn` = TabPFN v2, `tabpfn25` / `tabpfn26` / `tabpfn3` = TabPFN 2.5 / 2.6 / 3 default checkpoints. "
          "Mean over 5 seeds; bold = best in row.", ""]
 for cfg, title in [("loso", "Leave-one-source-out (held-out synthetic source)"), ("random_split", "Random split")]:
     if not os.path.exists(f"{ROOT}/{cfg}/results.csv"):
         continue
     df = load(cfg)
     lines += [f"## {title}", "", md_table(df, [("none", 0.0), ("block", 0.5), ("block_shift", 0.5)], ORDER), ""]
-    for b in ["tabicl_impute", "tabicl_aware", "tabpfn", "tabicl_patternnorm"]:
+    for b in ["tabicl_impute", "tabicl_aware", "tabpfn", "tabpfn25", "tabpfn3", "tabicl_patternnorm"]:
         lines += [f"### {cfg}: `tabicl_m_sa` vs `{b}`, paired over block + block_shift, rates 0.3/0.5, 5 seeds", "", paired(df, "tabicl_m_sa", b), ""]
     lines += [f"### {cfg}: `tabicl_m_sa` vs `tabicl_impute`, block_shift only", "", paired(df, "tabicl_m_sa", "tabicl_impute", ["block_shift"]), ""]
     cov = df[(df.task == "regression") & (df.mechanism == "block_shift") & (df.rate == 0.5)].groupby(["dataset", "model"])[["coverage80", "width80"]].mean().round(3)

@@ -32,7 +32,10 @@ tabicl_aware_zero  released weights inside the missing-aware architecture, new p
 tabicl_aware       a checkpoint trained with --col_missing_aware (pass --aware_ckpt)
 xgboost            native NaN handling
 catboost           native NaN handling
-tabpfn             TabPFN v2, native NaN handling (needs its weights)
+tabpfn             TabPFN v2, native NaN handling (public weights, tabpfn==2.2.1)
+tabpfn25 / tabpfn26 / tabpfn3
+                   TabPFN 2.5 / 2.6 / 3 default checkpoints from Hugging Face (needs the
+                   tabpfn>=8 package; weights are fetched with hf_hub_download)
 
 Examples
 --------
@@ -440,14 +443,25 @@ class ModelZoo:
                 return _tree_worker(name, task, X_tr, y_tr, X_te, seed)
             return self._tree_pool().apply(_tree_worker, (name, task, X_tr, y_tr, X_te, seed))
 
-        if name == "tabpfn":
+        if name in ("tabpfn", "tabpfn25", "tabpfn26", "tabpfn3"):
             from tabpfn import TabPFNClassifier, TabPFNRegressor
 
+            kw = dict(device=self.args.device or "cpu", random_state=seed)
+            if name != "tabpfn":
+                from huggingface_hub import hf_hub_download
+
+                ver, repo = {
+                    "tabpfn25": ("v2.5", "Prior-Labs/tabpfn_2_5"),
+                    "tabpfn26": ("v2.6", "Prior-Labs/tabpfn_2_6"),
+                    "tabpfn3": ("v3", "Prior-Labs/tabpfn_3"),
+                }[name]
+                kind = "regressor" if task == "regression" else "classifier"
+                kw["model_path"] = hf_hub_download(repo, f"tabpfn-{ver}-{kind}-{ver}_default.ckpt")
             if task == "regression":
-                est = TabPFNRegressor(device=self.args.device or "cpu", random_state=seed)
+                est = TabPFNRegressor(**kw)
                 est.fit(X_tr, y_tr)
                 return {"mean": est.predict(X_te)}
-            est = TabPFNClassifier(device=self.args.device or "cpu", random_state=seed)
+            est = TabPFNClassifier(**kw)
             est.fit(X_tr, y_tr)
             return {"proba": est.predict_proba(X_te)}
 
@@ -771,7 +785,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=["tabicl_impute", "tabicl_indicator", "tabicl_aware_zero", "xgboost"],
         choices=[
             "tabicl_impute", "tabicl_indicator", "tabicl_patternnorm", "tabicl_iterimpute", "tabicl_knnimpute",
-            "tabicl_aware", "tabicl_aware_zero", "xgboost", "catboost", "tabpfn",
+            "tabicl_aware", "tabicl_aware_zero", "xgboost", "catboost", "tabpfn", "tabpfn25", "tabpfn26", "tabpfn3",
         ],
     )
     p.add_argument("--plain_ckpt", default=None, help="Released classifier checkpoint (default: auto-download)")

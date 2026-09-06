@@ -1,0 +1,51 @@
+{
+  "out": "results/headroom/tabpfn3_loso",
+  "datasets": [
+    "breast_cancer",
+    "wine",
+    "diabetes",
+    "openml:31",
+    "openml:1590",
+    "openml:531"
+  ],
+  "target": null,
+  "source_col": null,
+  "task": null,
+  "max_rows": 3000,
+  "test_size": 0.3,
+  "mechanisms": [
+    "block",
+    "block_shift"
+  ],
+  "split": "source",
+  "shift_scale": 0.5,
+  "noise_scale": 0.3,
+  "add_source_col": false,
+  "rates": [
+    0.3,
+    0.5
+  ],
+  "seeds": [
+    0,
+    1,
+    2,
+    3,
+    4
+  ],
+  "include_complete": true,
+  "models": [
+    "tabpfn3"
+  ],
+  "plain_ckpt": null,
+  "plain_ckpt_reg": null,
+  "aware_ckpt": null,
+  "aware_ckpt_reg": null,
+  "n_estimators": 8,
+  "device": "cuda",
+  "loso": false,
+  "natural": false,
+  "min_source_rows": 20,
+  "plot": false,
+  "resummarize": false,
+  "no_isolation": false
+}
