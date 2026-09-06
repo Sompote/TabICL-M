@@ -262,6 +262,8 @@ class TabICLRegressor(RegressorMixin, TabICLBaseEstimator):
         n_jobs: Optional[int] = None,
         verbose: bool = False,
         inference_config: Optional[InferenceConfig | Dict] = None,
+        embed_with_test: bool = False,
+        self_impute: bool = False,
     ):
         self.n_estimators = n_estimators
         self.norm_methods = norm_methods
@@ -281,6 +283,8 @@ class TabICLRegressor(RegressorMixin, TabICLBaseEstimator):
         self.random_state = random_state
         self.verbose = verbose
         self.inference_config = inference_config
+        self.embed_with_test = embed_with_test
+        self.self_impute = self_impute
 
     def _load_model(self) -> None:
         """Load a model from a given path or download it if not available.
@@ -530,11 +534,14 @@ class TabICLRegressor(RegressorMixin, TabICLBaseEstimator):
             y_batch = torch.from_numpy(y_batch).float().to(self.device_)
 
             with torch.no_grad():
+                if self.self_impute and getattr(self.model_, "reconstruction", False):
+                    X_batch = self.model_.impute(X_batch, y_batch)
                 out = self.model_.predict_stats(
                     X_batch,
                     y_batch,
                     output_type=output_type,
                     alphas=alphas,
+                    embed_with_test=self.embed_with_test,
                     inference_config=self.inference_config_,
                 )
                 if isinstance(out, dict):

@@ -366,6 +366,59 @@ class TabICL(nn.Module):
             )
         return kept
 
+    @torch.no_grad()
+    def impute(self, X: Tensor, y_train: Tensor) -> Tensor:
+        """Fill missing cells with the reconstruction head's estimate (test-time self-imputation).
+
+        The per-feature tokens of the row-wise interaction are decoded by ``recon_head``;
+        with feature grouping every feature appears in several group slots and the
+        estimates are averaged. Only cells that are NaN in ``X`` are replaced.
+
+        Parameters
+        ----------
+        X : Tensor
+            Input of shape (B, T, H) with NaN at missing cells (train and test rows).
+
+        y_train : Tensor
+            Training labels of shape (B, train_size).
+
+        Returns
+        -------
+        Tensor
+            Copy of ``X`` with the missing cells filled.
+        """
+        assert self.reconstruction, "impute() requires a model trained with reconstruction=True"
+        missing = torch.isnan(X)
+        if not missing.any():
+            return X
+        was_training = self.training
+        self.train()  # the training path returns the per-feature tokens
+        try:
+            _, tokens = self._train_forward(X, y_train, return_tokens=True)
+        finally:
+            self.train(was_training)
+        rec = self.recon_head(tokens).to(X.dtype)  # (B, T, G, S)
+        B, T, H = X.shape
+        emb = self.col_embedder
+        if emb.feature_group:
+            mode = "same" if emb.feature_group is True else emb.feature_group
+            G, S = rec.shape[-2], rec.shape[-1]
+            X_hat = torch.zeros(B, T, H, device=X.device, dtype=X.dtype)
+            count = torch.zeros(H, device=X.device, dtype=X.dtype)
+            if mode == "same":
+                for i in range(S):
+                    idx = (torch.arange(G, device=X.device) + 2**i) % H
+                    X_hat.index_add_(2, idx, rec[..., i])
+                    count.index_add_(0, idx, torch.ones(G, device=X.device, dtype=X.dtype))
+            else:  # padded groups: slot i of group g is feature g * S + i
+                flat = rec.reshape(B, T, G * S)[..., :H]
+                X_hat = flat
+                count = torch.ones(H, device=X.device, dtype=X.dtype)
+            X_hat = X_hat / count.clamp_min(1.0)
+        else:
+            X_hat = rec[..., 0]
+        return torch.where(missing, X_hat, X)
+
     def _absent_groups(self, X: Tensor) -> Optional[Tensor]:
         """Boolean (B, T, G) mask, True where every cell of a row's feature token is missing."""
         if not self.row_missing_aware:

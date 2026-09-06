@@ -4,7 +4,8 @@ REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 START, END = "<!-- sa-results:start -->", "<!-- sa-results:end -->"
 SOURCES = [("results/sa_eval/summary_vs_baselines.md", "Source-aware checkpoint (10k steps) against the baselines"),
            ("results/sa_ablation/summary.md", "Ablation of each part"),
-           ("results/sa_eval_20k/summary_vs_baselines.md", "After 20k steps (stage 4b)")]
+           ("results/sa_eval_20k/summary_vs_baselines.md", "After 20k steps (stage 4b)"),
+           ("results/broad/summary.md", "20-dataset benchmark against TabPFN 2.5 and TabPFN-3")]
 parts, files = [], []
 for f, title in SOURCES:
     p = os.path.join(REPO, f)

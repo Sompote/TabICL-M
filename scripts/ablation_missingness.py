@@ -30,6 +30,10 @@ tabicl_patternnorm released TabICL after pattern-conditional normalisation: rows
 tabicl_aware_zero  released weights inside the missing-aware architecture, new parameters
                    at zero: the architecture change alone, without any training
 tabicl_aware       a checkpoint trained with --col_missing_aware (pass --aware_ckpt)
+tabicl_aware_ewt / tabicl_aware_si / tabicl_aware_ewt_si
+                   the same checkpoint with test-time options: transductive column
+                   embedding (test rows attend in the column set transformer) and/or
+                   self-imputation with the reconstruction head before prediction
 xgboost            native NaN handling
 catboost           native NaN handling
 tabpfn             TabPFN v2, native NaN handling (public weights, tabpfn==2.2.1)
@@ -395,11 +399,12 @@ class ModelZoo:
         return out
 
     # -- runners -------------------------------------------------------------
-    def _tabicl(self, task, ckpt, seed):
+    def _tabicl(self, task, ckpt, seed, **extra):
         from tabicl import TabICLClassifier, TabICLRegressor
 
         cls = TabICLRegressor if task == "regression" else TabICLClassifier
         kw = dict(model_path=ckpt, n_estimators=self.args.n_estimators, device=self.args.device, random_state=seed)
+        kw.update(extra)
         return cls(**kw)
 
     def run(self, name: str, task: str, X_tr, y_tr, X_te, seed: int) -> Dict[str, np.ndarray]:
@@ -419,19 +424,22 @@ class ModelZoo:
             X_tr = imp.fit_transform(X_tr)
             X_te = imp.transform(X_te)
 
+        aware_variants = ("tabicl_aware", "tabicl_aware_ewt", "tabicl_aware_si", "tabicl_aware_ewt_si")
         if name in (
             "tabicl_impute", "tabicl_indicator", "tabicl_patternnorm", "tabicl_iterimpute", "tabicl_knnimpute",
-            "tabicl_aware", "tabicl_aware_zero",
+            "tabicl_aware_zero", *aware_variants,
         ):
-            if name == "tabicl_aware":
+            extra = {}
+            if name in aware_variants:
                 ckpt = self._aware_ckpt(task)
                 if ckpt is None:
                     raise RuntimeError("tabicl_aware needs --aware_ckpt / --aware_ckpt_reg")
+                extra = dict(embed_with_test="_ewt" in name, self_impute="_si" in name)
             elif name == "tabicl_aware_zero":
                 ckpt = self._aware_zero_ckpt_path(task)
             else:
                 ckpt = self._plain_ckpt(task)
-            est = self._tabicl(task, ckpt, seed)
+            est = self._tabicl(task, ckpt, seed, **extra)
             est.fit(X_tr, y_tr)
             if task == "regression":
                 out = est.predict(X_te, output_type=["mean", "quantiles"], alphas=[0.1, 0.9])
@@ -785,7 +793,8 @@ def build_parser() -> argparse.ArgumentParser:
         default=["tabicl_impute", "tabicl_indicator", "tabicl_aware_zero", "xgboost"],
         choices=[
             "tabicl_impute", "tabicl_indicator", "tabicl_patternnorm", "tabicl_iterimpute", "tabicl_knnimpute",
-            "tabicl_aware", "tabicl_aware_zero", "xgboost", "catboost", "tabpfn", "tabpfn25", "tabpfn26", "tabpfn3",
+            "tabicl_aware", "tabicl_aware_ewt", "tabicl_aware_si", "tabicl_aware_ewt_si", "tabicl_aware_zero",
+            "xgboost", "catboost", "tabpfn", "tabpfn25", "tabpfn26", "tabpfn3",
         ],
     )
     p.add_argument("--plain_ckpt", default=None, help="Released classifier checkpoint (default: auto-download)")

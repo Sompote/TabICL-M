@@ -140,6 +140,7 @@ torchrun --standalone --nproc_per_node=$NUM_GPUS -m tabicl.train \
             --missing_p_contiguous_sources $P_CONTIGUOUS \
             --missing_p_source_shift $P_SHIFT \
             --missing_p_source_noise $P_NOISE \
+            --missing_min_obs_frac ${MIN_OBS_FRAC:-0.3} \
             --missing_max_shift_scale ${MAX_SHIFT:-0.5} \
             --missing_max_noise_scale ${MAX_NOISE:-0.3} \
             --missing_p_source_column 0.5 \
