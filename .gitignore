@@ -151,3 +151,4 @@ checkpoints/
 *.ckpt
 results/*.log
 catboost_info/
+results/.aware_zero_cache/
