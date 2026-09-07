@@ -407,6 +407,27 @@ class ModelZoo:
         kw.update(extra)
         return cls(**kw)
 
+    def _fit_predict_regression(self, est, X_tr, y_tr, X_te, opts, task, ckpt, seed, extra):
+        """Regression prediction with optional test-time variants (median, target power transform)."""
+        est.fit(X_tr, y_tr)
+        if "ypow" in opts:
+            # Ensemble over the target representation: raw y and Yeo-Johnson-transformed y.
+            # The transformed member's mean is the mean of its inverse-transformed quantiles.
+            from sklearn.preprocessing import PowerTransformer
+
+            pt = PowerTransformer(method="yeo-johnson", standardize=True).fit(y_tr.reshape(-1, 1))
+            est2 = self._tabicl(task, ckpt, seed, **extra)
+            est2.fit(X_tr, pt.transform(y_tr.reshape(-1, 1)).ravel())
+            alphas = np.linspace(0.005, 0.995, 99)
+            q2 = est2.predict(X_te, output_type="quantiles", alphas=list(alphas))  # (n, 99) transformed space
+            q2 = pt.inverse_transform(q2.reshape(-1, 1)).reshape(q2.shape)
+            out = est.predict(X_te, output_type=["mean", "quantiles"], alphas=[0.1, 0.9])
+            mean2 = np.nanmean(q2, axis=1)
+            return {"mean": 0.5 * (out["mean"] + mean2), "q10": out["quantiles"][:, 0], "q90": out["quantiles"][:, 1]}
+        key = "median" if "med" in opts else "mean"
+        out = est.predict(X_te, output_type=[key, "quantiles"], alphas=[0.1, 0.9])
+        return {"mean": out[key], "q10": out["quantiles"][:, 0], "q90": out["quantiles"][:, 1]}
+
     def run(self, name: str, task: str, X_tr, y_tr, X_te, seed: int) -> Dict[str, np.ndarray]:
         """Fit and predict. Returns dict with 'proba' (clf) or 'mean' and optional 'q10','q90' (reg)."""
         if name == "tabicl_indicator":
@@ -424,26 +445,32 @@ class ModelZoo:
             X_tr = imp.fit_transform(X_tr)
             X_te = imp.transform(X_te)
 
-        aware_variants = ("tabicl_aware", "tabicl_aware_ewt", "tabicl_aware_si", "tabicl_aware_ewt_si")
-        if name in (
+        # tabicl_aware with test-time suffixes: _ewt (transductive embedding), _si (self-imputation),
+        # _n32 (32 ensemble members), _med (median instead of mean), _ypow (target power-transform ensemble)
+        is_aware = name == "tabicl_aware" or name.startswith("tabicl_aware_") and name != "tabicl_aware_zero"
+        if is_aware or name in (
             "tabicl_impute", "tabicl_indicator", "tabicl_patternnorm", "tabicl_iterimpute", "tabicl_knnimpute",
-            "tabicl_aware_zero", *aware_variants,
+            "tabicl_aware_zero",
         ):
-            extra = {}
-            if name in aware_variants:
+            extra, opts = {}, set()
+            if is_aware:
                 ckpt = self._aware_ckpt(task)
                 if ckpt is None:
                     raise RuntimeError("tabicl_aware needs --aware_ckpt / --aware_ckpt_reg")
-                extra = dict(embed_with_test="_ewt" in name, self_impute="_si" in name)
+                opts = set(name[len("tabicl_aware"):].split("_")) - {""}
+                extra = dict(embed_with_test="ewt" in opts, self_impute="si" in opts)
+                if "n32" in opts:
+                    extra["n_estimators"] = 32
+                if "qn" in opts:  # extra feature-normalisation member
+                    extra["norm_methods"] = ["none", "power", "quantile_rtdl"]
             elif name == "tabicl_aware_zero":
                 ckpt = self._aware_zero_ckpt_path(task)
             else:
                 ckpt = self._plain_ckpt(task)
             est = self._tabicl(task, ckpt, seed, **extra)
-            est.fit(X_tr, y_tr)
             if task == "regression":
-                out = est.predict(X_te, output_type=["mean", "quantiles"], alphas=[0.1, 0.9])
-                return {"mean": out["mean"], "q10": out["quantiles"][:, 0], "q90": out["quantiles"][:, 1]}
+                return self._fit_predict_regression(est, X_tr, y_tr, X_te, opts, task, ckpt, seed, extra)
+            est.fit(X_tr, y_tr)
             return {"proba": est.predict_proba(X_te)}
 
         if name in ("xgboost", "catboost"):
@@ -451,10 +478,13 @@ class ModelZoo:
                 return _tree_worker(name, task, X_tr, y_tr, X_te, seed)
             return self._tree_pool().apply(_tree_worker, (name, task, X_tr, y_tr, X_te, seed))
 
-        if name in ("tabpfn", "tabpfn25", "tabpfn26", "tabpfn3"):
+        if name in ("tabpfn", "tabpfn25", "tabpfn26", "tabpfn3", "tabpfn3_n32"):
             from tabpfn import TabPFNClassifier, TabPFNRegressor
 
             kw = dict(device=self.args.device or "cpu", random_state=seed)
+            if name.endswith("_n32"):
+                kw["n_estimators"] = 32
+                name = name[: -len("_n32")]
             if name != "tabpfn":
                 from huggingface_hub import hf_hub_download
 
@@ -793,8 +823,9 @@ def build_parser() -> argparse.ArgumentParser:
         default=["tabicl_impute", "tabicl_indicator", "tabicl_aware_zero", "xgboost"],
         choices=[
             "tabicl_impute", "tabicl_indicator", "tabicl_patternnorm", "tabicl_iterimpute", "tabicl_knnimpute",
-            "tabicl_aware", "tabicl_aware_ewt", "tabicl_aware_si", "tabicl_aware_ewt_si", "tabicl_aware_zero",
-            "xgboost", "catboost", "tabpfn", "tabpfn25", "tabpfn26", "tabpfn3",
+            "tabicl_aware", "tabicl_aware_ewt", "tabicl_aware_si", "tabicl_aware_ewt_si", "tabicl_aware_n32",
+            "tabicl_aware_med", "tabicl_aware_ypow", "tabicl_aware_n32_ypow", "tabicl_aware_n32_ypow_qn", "tabicl_aware_zero",
+            "xgboost", "catboost", "tabpfn", "tabpfn25", "tabpfn26", "tabpfn3", "tabpfn3_n32",
         ],
     )
     p.add_argument("--plain_ckpt", default=None, help="Released classifier checkpoint (default: auto-download)")
