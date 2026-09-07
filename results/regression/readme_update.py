@@ -14,7 +14,13 @@ block = (f"{S}\n\n### Regression against TabPFN-3 (auto-generated)\n\n"
          "against the 20k model), so the planned full continuation runs were stopped rather than spend 25 GPU-hours on a "
          "flat curve. TabPFN-3 gains nothing from 32 members either (74/66), so the comparison is saturated on both sides. "
          "The residual gap is base regression strength inherited from TabICLv2, whose released regressor is itself far "
-         "behind TabPFN-3 here (mean rank 6.43 against 3.95). Full tables: `results/regression/summary.md`.\n\n"
+         "behind TabPFN-3 here (mean rank 6.43 against 3.95). Two more probes closed the question "
+         "(`results/regression/probes_summary.md`): a weight soup of the 10k and 20k regressors gains nothing, and the gap "
+         "on kin8nm exists at every training-set size and narrows with data, so it is not a sample-efficiency problem "
+         "of in-context learning. Test-time fine-tuning on the context rows, with TabPFN-3 given the same treatment, "
+         "recovers a third of the kin8nm gap and then plateaus; TabPFN-3 gets slightly worse when fine-tuned and its "
+         "zero-shot model stays the best on both datasets, so fine-tuning is a shared lever that does not change the "
+         "ordering. Full tables: `results/regression/summary.md`.\n\n"
          f"{body}\nVerdict (best of ours against TabPFN-3 at its best setting): **{verdict}**.\n\n{E}")
 readme = open(f"{REPO}/README.md").read()
 if S in readme: readme = readme[: readme.index(S)] + block + readme[readme.index(E) + len(E):]

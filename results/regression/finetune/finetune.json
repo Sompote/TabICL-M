@@ -1,0 +1,101 @@
+[
+ {
+  "dataset": "openml:189",
+  "seed": 0,
+  "n_train": 2100,
+  "zeroshot": 0.07395836216926659,
+  "t_zeroshot": 1.1,
+  "finetune_lr1e-05": 0.072813119870813,
+  "t_lr1e-05": 3.1,
+  "finetune_lr3e-05": 0.0721293579123748,
+  "t_lr3e-05": 3.7
+ },
+ {
+  "dataset": "openml:189",
+  "seed": 1,
+  "n_train": 2100,
+  "zeroshot": 0.0775989987044308,
+  "t_zeroshot": 0.3,
+  "finetune_lr1e-05": 0.07710482178150507,
+  "t_lr1e-05": 3.6,
+  "finetune_lr3e-05": 0.07769628683861876,
+  "t_lr3e-05": 2.4
+ },
+ {
+  "dataset": "openml:189",
+  "seed": 2,
+  "n_train": 2100,
+  "zeroshot": 0.07670027594768215,
+  "t_zeroshot": 0.3,
+  "finetune_lr1e-05": 0.07478751821990492,
+  "t_lr1e-05": 2.9,
+  "finetune_lr3e-05": 0.07375115110864858,
+  "t_lr3e-05": 2.8
+ },
+ {
+  "dataset": "openml:507",
+  "seed": 0,
+  "n_train": 2100,
+  "zeroshot": 0.11246533934016686,
+  "t_zeroshot": 0.3,
+  "finetune_lr1e-05": 0.11246533934016686,
+  "t_lr1e-05": 1.2,
+  "finetune_lr3e-05": 0.1085925019095396,
+  "t_lr3e-05": 2.4
+ },
+ {
+  "dataset": "openml:507",
+  "seed": 1,
+  "n_train": 2100,
+  "zeroshot": 0.111419311501356,
+  "t_zeroshot": 0.3,
+  "finetune_lr1e-05": 0.10703935556142528,
+  "t_lr1e-05": 1.9,
+  "finetune_lr3e-05": 0.10908418624580277,
+  "t_lr3e-05": 1.5
+ },
+ {
+  "dataset": "openml:507",
+  "seed": 2,
+  "n_train": 2100,
+  "zeroshot": 0.1182538815485816,
+  "t_zeroshot": 0.3,
+  "finetune_lr1e-05": 0.1182538815485816,
+  "t_lr1e-05": 1.3,
+  "finetune_lr3e-05": 0.10843389004132048,
+  "t_lr3e-05": 2.7
+ },
+ {
+  "dataset": "openml:42225",
+  "seed": 0,
+  "n_train": 2100,
+  "zeroshot": 666.7611662413268,
+  "t_zeroshot": 0.3,
+  "finetune_lr1e-05": 650.4853545719719,
+  "t_lr1e-05": 3.6,
+  "finetune_lr3e-05": 650.9858856339865,
+  "t_lr3e-05": 2.1
+ },
+ {
+  "dataset": "openml:42225",
+  "seed": 1,
+  "n_train": 2100,
+  "zeroshot": 538.9725040194527,
+  "t_zeroshot": 0.3,
+  "finetune_lr1e-05": 536.278233870903,
+  "t_lr1e-05": 3.9,
+  "finetune_lr3e-05": 532.2769845639209,
+  "t_lr3e-05": 3.6
+ },
+ {
+  "dataset": "openml:42225",
+  "seed": 2,
+  "n_train": 2100,
+  "zeroshot": 702.9504063205768,
+  "t_zeroshot": 0.3,
+  "finetune_lr1e-05": 695.7475866440077,
+  "t_lr1e-05": 1.8,
+  "finetune_lr3e-05": 700.4413700619388,
+  "t_lr3e-05": 1.6
+ }
+]
