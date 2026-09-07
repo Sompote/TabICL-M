@@ -71,6 +71,7 @@ from __future__ import annotations
 import argparse
 import json
 import multiprocessing as mp
+import os
 import sys
 import time
 import warnings
@@ -392,8 +393,12 @@ class ModelZoo:
         config["col_missing_aware"] = True
         model = TabICL(**config)
         kept = model.load_pretrained_state_dict(ckpt["state_dict"])
-        out = Path(self.args.out) / f"aware_zero_{task}.ckpt"
-        torch.save({"config": config, "state_dict": model.state_dict()}, out)
+        # One shared cache instead of a fresh 100+ MB copy in every output directory.
+        cache = Path(os.environ.get("TABICL_AWARE_ZERO_CACHE", Path(self.args.out).parent / ".aware_zero_cache"))
+        cache.mkdir(parents=True, exist_ok=True)
+        out = cache / f"aware_zero_{task}.ckpt"
+        if not out.exists():
+            torch.save({"config": config, "state_dict": model.state_dict()}, out)
         print(f"[aware_zero] built {out} from {est.model_path_}; zero-initialised: {kept}")
         self._aware_zero_ckpt[task] = out
         return out
