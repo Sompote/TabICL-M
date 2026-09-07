@@ -174,5 +174,5 @@ torchrun --standalone --nproc_per_node=$NUM_GPUS -m tabicl.train \
             --recompute $RECOMPUTE \
             --checkpoint_dir $CKPT_DIR \
             $RESUME_ARGS \
-            --save_temp_every 50 \
-            --save_perm_every 500
+            --save_temp_every ${SAVE_TEMP:-50} \
+            --save_perm_every ${SAVE_PERM:-500}
