@@ -20,27 +20,41 @@ for cfg, title in [("loso", "Leave-one-source-out"), ("random_split", "Random sp
     groups = [(["block", "block_shift"], "all"), (["block_shift"], "with source offset"), (["block"], "no offset")]
     if cfg == "random_split": groups = [(["block", "block_shift"], "all")]
     for mechs, gname in groups:
-        p = df[df.mechanism.isin(mechs)].pivot_table(index=["dataset", "mechanism", "rate", "seed"], columns="model", values="rmse")[models].dropna()
-        if p.empty: continue
+        full = df[df.mechanism.isin(mechs)].pivot_table(index=["dataset", "mechanism", "rate", "seed"], columns="model", values="rmse")
+        if full.empty: continue
+        # rank only over models evaluated on (nearly) every condition; compare each model to TabPFN-3
+        # on the conditions the two of them share, so a partially evaluated variant costs nothing.
+        cover = full.notna().mean()
+        core = [m for m in models if m in full and cover[m] > 0.95]
+        p = full[core].dropna()
         ranks = p.rank(axis=1, ascending=True)
-        lines += [f"## {title}, {gname}: {len(p)} conditions", "", "| model | mean rank | times first | vs `tabpfn3` wins/losses | datasets won |", "|---|---|---|---|---|"]
-        for m in ranks.mean().sort_values().index:
-            if "tabpfn3" in p:
-                d = p["tabpfn3"] - p[m]; per = d.groupby(level="dataset").mean()
-                vs = f"{int((d > 0).sum())}/{int((d < 0).sum())}"; won = f"{int((per > 0).sum())}/{len(per)}"
-            else: vs = won = "—"
-            lines.append(f"| `{m}` | {ranks[m].mean():.2f} | {int((ranks[m] == 1).sum())} | {vs} | {won} |")
+        lines += [f"## {title}, {gname}: {len(p)} conditions", "",
+                  "| model | mean rank | times first | vs `tabpfn3` wins/losses | datasets won | conditions |", "|---|---|---|---|---|---|"]
+        order = list(ranks.mean().sort_values().index) + [m for m in models if m in full and m not in core]
+        for m in order:
+            mr = f"{ranks[m].mean():.2f}" if m in ranks else "—"
+            tf = str(int((ranks[m] == 1).sum())) if m in ranks else "—"
+            if "tabpfn3" in full and m != "tabpfn3":
+                q = full[[m, "tabpfn3"]].dropna(); d = q["tabpfn3"] - q[m]; per = d.groupby(level="dataset").mean()
+                vs = f"{int((d > 0).sum())}/{int((d < 0).sum())}"; won = f"{int((per > 0).sum())}/{len(per)}"; nc = len(q)
+            else:
+                vs = won = "—"; nc = int(full[m].notna().sum())
+            lines.append(f"| `{m}` | {mr} | {tf} | {vs} | {won} | {nc} |")
         lines.append("")
-        ours = [m for m in models if m.startswith("tabicl")]
-        best = min(ours, key=lambda m: ranks[m].mean()) if ours else None
-        ref = "tabpfn3_n32" if "tabpfn3_n32" in p else "tabpfn3"
-        if best and ref in p:
-            q = p[[best, ref]]; d = q[ref] - q[best]; per = d.groupby(level="dataset").mean()
+        ours = [m for m in models if m.startswith("tabicl") and m in full]
+        ref = "tabpfn3_n32" if "tabpfn3_n32" in full else "tabpfn3"
+        def _score(m):
+            q = full[[m, ref]].dropna(); return -( (q[ref] - q[m]) > 0 ).mean()
+        best = min(ours, key=_score) if ours else None
+        if best and ref in full:
+            q = full[[best, ref]].dropna(); d = q[ref] - q[best]; per = d.groupby(level="dataset").mean()
+            rel = 100 * d / q[ref]  # RMSE scales differ by orders of magnitude across these datasets
             ahead = (d > 0).mean() > 0.5 and (per > 0).sum() > len(per) / 2
             key = cfg if gname == "all" else f"{cfg}[{gname.replace(' ', '_')}]"
             verdict[key] = "AHEAD" if ahead else "BEHIND"
             lines += [f"Best of ours `{best}` vs `{ref}`: {int((d > 0).sum())}/{int((d < 0).sum())} paired, "
-                      f"datasets won {int((per > 0).sum())}/{len(per)}, mean RMSE gain {d.mean():+.3f} -> **{verdict[key]}**", ""]
+                      f"datasets won {int((per > 0).sum())}/{len(per)}, mean RMSE {rel.mean():+.2f} % "
+                      f"(positive = ours lower) -> **{verdict[key]}**", ""]
     t = df[df.rate == 0.5].pivot_table(index=["dataset", "mechanism"], columns="model", values="rmse")[models]
     lines += [f"### {title}: per-dataset means at rate 0.5", "",
               "| dataset | mechanism | " + " | ".join(f"`{m}`" for m in models) + " |", "|---|---|" + "---|" * len(models)]

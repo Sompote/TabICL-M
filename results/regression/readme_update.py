@@ -6,9 +6,15 @@ summary = open(f"{ROOT}/summary.md").read(); verdict = open(f"{ROOT}/verdict.txt
 tables = re.findall(r"(## .*?: \d+ conditions\n\n\| model.*?\n\n(?:Best of ours.*?\n\n)?)", summary, re.S)
 body = "\n".join(t.replace("## ", "#### ") for t in tables)
 block = (f"{S}\n\n### Regression against TabPFN-3 (auto-generated)\n\n"
-         "Regression is where TabPFN-3 leads. The levers tried, hands-off: 32 ensemble members (`_n32`), the median instead of the mean (`_med`), "
-         "a target power-transform ensemble (`_ypow`), an extra `quantile` normalisation member (`_qn`), a regressor continued on a half-complete prior "
-         "(`_4c`) and, if still behind, on a mostly complete prior (`_4d`). Full tables: `results/regression/summary.md`.\n\n"
+         "Regression is the half of the benchmark where TabPFN-3 leads, so it was attacked separately on the seven regression "
+         "datasets. Test-time levers: 32 ensemble members (`_n32`), the median instead of the mean (`_med`), a target "
+         "power-transform ensemble (`_ypow`), an extra quantile-normalisation member (`_qn`). Training lever: the regressor "
+         "continued on a prior with half the tables complete (`_4c3500`, a 3500-step probe). None of them changes the "
+         "head-to-head outside the source-offset case: the probe moved the random split by nothing (85 wins / 90 losses "
+         "against the 20k model), so the planned full continuation runs were stopped rather than spend 25 GPU-hours on a "
+         "flat curve. TabPFN-3 gains nothing from 32 members either (74/66), so the comparison is saturated on both sides. "
+         "The residual gap is base regression strength inherited from TabICLv2, whose released regressor is itself far "
+         "behind TabPFN-3 here (mean rank 6.43 against 3.95). Full tables: `results/regression/summary.md`.\n\n"
          f"{body}\nVerdict (best of ours against TabPFN-3 at its best setting): **{verdict}**.\n\n{E}")
 readme = open(f"{REPO}/README.md").read()
 if S in readme: readme = readme[: readme.index(S)] + block + readme[readme.index(E) + len(E):]
