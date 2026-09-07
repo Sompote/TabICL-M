@@ -10,14 +10,18 @@ This repository is a fork of TabICL by Qu, Holzmüller, Varoquaux and Le Morvan.
 All of TabICLv2 is still here and works unchanged. TabICL-M adds three parts on top,
 each behind a flag, so each can be switched off for ablation.
 
-**Status.** Research code. The three parts are implemented and tested, and the
-first stage-4 run is done: the classifier and the regressor were each trained for
-3000 steps from the released TabICLv2 weights on one GPU. The checkpoints are in
-this repository under `checkpoints/tabicl-m/<task>/step-3000.ckpt` (git LFS, run
-`git lfs pull`). On complete data they reproduce TabICLv2 exactly. Under injected
-missingness they tie the mean-imputation baseline within seed noise, and both beat
-XGBoost and CatBoost. See [Results so far](#results-so-far) and
-[What remains](#what-remains).
+**Status.** Research code, two generations of checkpoints, all in this repository
+under git LFS (`git lfs pull`). The first stage-4 checkpoints
+(`checkpoints/tabicl-m/<task>/step-3000.ckpt`) add the value-level parts only and
+tie the mean-imputation baseline. The **source-aware** checkpoints
+(`checkpoints/tabicl-m-sa-20k/<task>/step-10000.ckpt`, 20k steps in total) add a
+representation of the *source* a row comes from. On 20 datasets they are the best
+model when a held-out source carries a measurement offset (mean rank 2.22 against
+2.45 for TabPFN-3 and 2.53 for TabPFN 2.5, 14 of 20 datasets won against TabPFN-3),
+a close second to TabPFN-3 over all leave-one-source-out conditions (2.32 against
+2.28), and second on random splits. See
+[Source-aware TabICL-M](#source-aware-tabicl-m-what-was-done-and-what-it-shows)
+and [What remains](#what-remains).
 
 **Workflow in three commands.** Install, run continued pre-training on one GPU,
 evaluate against the baselines:
@@ -316,6 +320,72 @@ The block mechanism here removes column blocks per source but injects no per-sou
 offset or noise, and the split is random, not by source. That is the mild version of
 the case TabICL-M is built for. Full tables and plots:
 `results/ablation_m/builtin/summary.md`, `results/ablation_m/openml/summary.md`.
+
+## Source-aware TabICL-M: what was done and what it shows
+
+The first stage-4 checkpoint told us where the headroom is
+([Results so far](#results-so-far)): not under random gaps, where mean imputation
+inside an in-context learner is already near the information limit, but when the
+test rows come from a **source the context has never seen**, with its own feature
+subset and its own measurement offset. There, every existing model, TabPFN-3
+included, loses 0.02 to 0.08 AUC or 1 to 3 RMSE beyond the loss from the gaps
+themselves (`results/headroom/`). The source-aware model is built for that case.
+
+**The principle.** In a merged table, rows that share a missingness pattern come
+from the same source. That is free, label-free provenance, and it is used at every
+stage (all additions are zero-initialised or identity on complete data, so the run
+still starts exactly at the released model; `tests/test_source_aware.py`):
+
+| stage | addition | flag |
+|---|---|---|
+| column embedder | every observed cell is also fed standardised within the rows of its own pattern group (source-relative value) | `col_group_stats` |
+| row interaction | feature tokens whose cells are all missing are excluded from the attention keys (observed-only rows) | `row_missing_aware` |
+| row interaction | a learned query reads out which features a row lacks and adds it to the row representation (pattern token) | `pattern_token` |
+| training | a pseudo-source loses a block of columns and the model reconstructs it; a view with per-source offset and noise must give the same predictions as the clean view | `--recon_mode`, `--consistency_weight` |
+| prior | most incomplete tables are block-structured, shifted, with a source that appears only in the test rows; stage 4b uses stronger shifts and sources with as few as 20 % of the features | `ARCH=source_aware` |
+
+**The result** (`results/broad/summary.md`; 20 datasets, block and block_shift
+missingness at 30 % and 50 %, 5 seeds, ~400 conditions per split; mean rank over
+five models, 1 = best):
+
+| split | condition | **source-aware TabICL-M** | TabPFN-3 | TabPFN 2.5 | TabICLv2 + mean imputation | CatBoost |
+|---|---|---|---|---|---|---|
+| leave-one-source-out | with source offset | **2.22** | 2.45 | 2.53 | 3.21 | 4.59 |
+| leave-one-source-out | all | 2.32 | **2.28** | 2.59 | 3.15 | 4.66 |
+| leave-one-source-out | no offset | 2.42 | **2.11** | 2.65 | 3.09 | 4.73 |
+| random split | all | 2.51 | **2.22** | 2.71 | 2.85 | 4.71 |
+
+Paired against TabPFN-3 (same seeds, same deleted cells): with a source offset
+105 wins / 95 losses and **14 of 20 datasets won**; over all leave-one-source-out
+conditions 190 / 206 and 12 of 20; on random splits 173 / 218. Against TabPFN 2.5
+the source-aware model wins in every summary (219 / 177 on leave-one-source-out,
+16 of 20 datasets). Against the released TabICLv2 it wins 281 / 116 and 18 of 20.
+
+Three sentences of interpretation. The model is the best available when a new
+source arrives with its own calibration, which is the case it was built for, and
+it holds that lead on 14 of 20 datasets against the strongest current tabular
+foundation model. It is a close second to TabPFN-3 in general, and behind it when
+a held-out source has no offset, which is a matter of base-model strength rather
+than of the missingness mechanism. On random splits, where no source-aware
+mechanism can help, the ordering is TabPFN-3, then this model, then TabPFN 2.5.
+
+**What each part contributes** (`results/sa_ablation/summary.md`; classifier, 3000
+steps each, win rate against mean imputation on held-out sources with offset):
+all parts 0.73; without source-relative values 0.70; without the training
+objectives 0.70; without observed-only rows 0.68; without the pattern token 0.65;
+all parts off, new prior only 0.62; the first stage-4 checkpoint 0.62; all parts at
+10k steps 0.77. Every part helps, the pattern token and the observed-only rows
+most, the prior alone not at all, and more steps help.
+
+**What did not work.** Two test-time options were tried on the trained model and
+are negative results (`results/sa_eval/tt/`): letting the test rows attend in the
+column set transformer is a coin flip (46 wins / 66 losses against the plain
+model), and filling absent cells with the reconstruction head before predicting
+hurts (29 / 83). Both are implemented (`embed_with_test`, `self_impute` on the
+estimators) and off by default.
+
+Everything below this line is generated by the training pipeline
+(`checkpoints/tabicl-m-sa/pipeline*.sh`).
 
 <!-- sa-results:start -->
 
@@ -1096,19 +1166,21 @@ Block and block_shift missingness at rates 0.3 / 0.5, 5 seeds. Rank 1 = best per
 
 ## What remains
 
-1. **Block missingness with source shift.** Rerun the evaluation with per-source
-   offset and noise injected in the block mechanism, and with splits by source.
-   The random-split block case above does not exercise the source-structured prior.
-2. **Leave-one-source-out on real data.** The compaction database with its
-   provenance groups is the target case. Random splits overstate the result,
-   because the model can learn the source instead of the physics.
-3. **Ablate each part.** Each flag can be switched off. A part that adds nothing
-   is dropped from the claim.
-4. **A longer run.** 3000 steps at learning rate 1e-5 is a short continuation.
-   The reconstruction loss was still falling at the end.
-
-If the trained model does not beat mean imputation on the block case with source
-shift, the honest result is that TabICLv2 is already robust to missing cells.
+1. **Plain block missingness on a held-out source.** TabPFN-3 leads there (mean
+   rank 2.11 against 2.42). The gap is base-model strength, not the missingness
+   mechanism; closing it needs a stronger base or a longer stage 4 on the full
+   TabICL prior.
+2. **Real multi-source data.** All source structure so far is synthetic (sources
+   drawn on complete tables). The compaction database with its provenance groups,
+   leave-one-lab-out, is the intended test and has not been run.
+3. **Significance.** Five seeds and 20 datasets give paired win rates of 52 to
+   57 % against TabPFN-3 under source offset. More seeds, and datasets with
+   natural source structure, are needed before the claim is stated as a
+   difference rather than a rank.
+4. **Intervals.** Under a held-out source the source-aware regressor is calibrated
+   (80 % coverage 0.81, width 1.6 target standard deviations) where the released
+   model over-covers (0.87, width 2.1). TabPFN's quantiles were not recorded; the
+   comparison of interval quality is open.
 
 ## Repository map
 
@@ -1123,7 +1195,13 @@ src/tabicl/train/_run.py              joint loss in the trainer
 src/tabicl/_sklearn/                  NaN pass-through when the model is missing-aware
 scripts/train_v2_missing_stage4.sh    continued pre-training recipe
 scripts/ablation_missingness.py       evaluation runner
-checkpoints/tabicl-m/                 stage-4 checkpoints (git LFS) and the launcher that produced them
+checkpoints/tabicl-m/                 first stage-4 checkpoints (git LFS) and the launcher that produced them
+checkpoints/tabicl-m-sa/              source-aware stage 4: launcher, self-driving pipelines (training, ablation, stage 4b, benchmark), 10k checkpoints
+checkpoints/tabicl-m-sa-20k/          source-aware checkpoints after stage 4b (git LFS): the ones to use
+results/headroom/                     where the headroom is: split by source vs random, shift vs none, every baseline incl. TabPFN 2.5 / 2.6 / 3
+results/sa_eval/, results/sa_eval_20k/ source-aware checkpoints against the baselines (10k, 20k)
+results/sa_ablation/                  per-part ablation
+results/broad/                        20-dataset benchmark against TabPFN 2.5 and TabPFN-3
 results/ablation_v2/                  evaluation of the released weights before stage 4
 results/ablation_m/                   evaluation of the trained checkpoints, with the runner script
 tests/test_prior_missingness.py       tests for each part (62 in total)
