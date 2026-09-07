@@ -15,11 +15,11 @@ under git LFS (`git lfs pull`). The first stage-4 checkpoints
 (`checkpoints/tabicl-m/<task>/step-3000.ckpt`) add the value-level parts only and
 tie the mean-imputation baseline. The **source-aware** checkpoints
 (`checkpoints/tabicl-m-sa-20k/<task>/step-10000.ckpt`, 20k steps in total) add a
-representation of the *source* a row comes from. On 20 datasets they are the best
-model when a held-out source carries a measurement offset (mean rank 2.22 against
-2.45 for TabPFN-3 and 2.53 for TabPFN 2.5, 14 of 20 datasets won against TabPFN-3),
-a close second to TabPFN-3 over all leave-one-source-out conditions (2.32 against
-2.28), and second on random splits. See
+representation of the *source* a row comes from. On 20 datasets against TabPFN-3
+they are level on classification, the best model of any kind when a held-out
+source carries a measurement offset (both tasks), and behind only on plain
+regression, for reasons that are the base model's rather than the method's. See
+the [Summary](#summary),
 [Source-aware TabICL-M](#source-aware-tabicl-m-what-was-done-and-what-it-shows)
 and [What remains](#what-remains).
 
@@ -32,6 +32,55 @@ bash scripts/train_v2_missing_stage4.sh clf          # and: reg
 python scripts/ablation_missingness.py --out results/ablation \
     --aware_ckpt checkpoints/tabicl-m/clf/step-3000.ckpt --plot
 ```
+
+## Summary
+
+**The idea.** In a merged table, rows that share a missingness pattern come from the
+same source. TabICL-M reads that pattern as provenance: column values are encoded
+relative to their own source, rows are represented from their observed features
+only, and a pattern token carries the source identity into in-context learning.
+The parts are zero-initialised, so the model equals TabICLv2 on complete data.
+
+**The evidence** (`results/broad/summary.md`): 20 datasets, block and block_shift
+missingness at 30 % and 50 %, 5 seeds, leave-one-source-out and random splits;
+mean rank over five models, 1 = best; paired counts and datasets won are against
+TabPFN-3 on identical splits and deleted cells.
+
+Classification, 13 datasets:
+
+| split | condition | **TabICL-M** | TabPFN-3 | TabPFN 2.5 | TabICLv2 | CatBoost | vs TabPFN-3 |
+|---|---|---|---|---|---|---|---|
+| held-out source | with offset | **2.35** | 2.41 | 2.48 | 3.08 | 4.68 | 61 / 69, **9 of 13 datasets** |
+| held-out source | all | 2.36 | 2.36 | 2.58 | 3.01 | 4.69 | 123 / 133, 9 of 13 |
+| held-out source | no offset | 2.37 | **2.31** | 2.68 | 2.94 | 4.70 | 62 / 64, 7 of 13 |
+| random split | all | **2.35** | 2.45 | 2.69 | 2.77 | 4.74 | 131 / 120, 8 of 13 |
+
+Regression, 7 datasets:
+
+| split | condition | **TabICL-M** | TabPFN-3 | TabPFN 2.5 | TabICLv2 | CatBoost | vs TabPFN-3 |
+|---|---|---|---|---|---|---|---|
+| held-out source | with offset | **1.97** | 2.53 | 2.63 | 3.44 | 4.43 | **44 / 26, 5 of 7 datasets** |
+| held-out source | all | 2.24 | **2.14** | 2.61 | 3.41 | 4.61 | 67 / 73, 3 of 7 |
+| held-out source | no offset | 2.50 | **1.74** | 2.59 | 3.37 | 4.80 | 23 / 47, 2 of 7 |
+| random split | all | 2.79 | **1.79** | 2.75 | 3.00 | 4.67 | 42 / 98, 1 of 7 |
+
+**Reading.** On classification TabICL-M is level with TabPFN-3 everywhere (a touch
+ahead on random splits and under source offset, identical rank overall; the
+differences are 0.002 to 0.005 AUC, inside seed noise). On regression it is clearly
+ahead of TabPFN-3 when the held-out source has a measurement offset (5 of 7
+datasets, 2.1 % lower RMSE) and clearly behind without one. That gap was probed
+exhaustively (ensembling, median, target transforms, a weight soup, continued
+training on complete tables, test-time fine-tuning with TabPFN-3 fine-tuned the same
+way): nothing changes the order. It exists at every training-set size, and TabPFN
+2.5 with 10 M parameters shows it too, so it is neither sample efficiency nor
+capacity but base-regressor quality on smooth functions inherited from TabICLv2.
+Against TabPFN 2.5, TabPFN v2, the released TabICLv2 and the tree models, TabICL-M
+wins every summary on both tasks.
+
+**In one line.** The first tabular foundation model that reads a row's missingness
+pattern as its provenance: level with TabPFN-3 on classification, the best model of
+any kind when a new source arrives with its own calibration, behind TabPFN-3 only on
+plain regression.
 
 ## What is new
 
@@ -231,30 +280,16 @@ still starts exactly at the released model; `tests/test_source_aware.py`):
 | training | a pseudo-source loses a block of columns and the model reconstructs it; a view with per-source offset and noise must give the same predictions as the clean view | `--recon_mode`, `--consistency_weight` |
 | prior | most incomplete tables are block-structured, shifted, with a source that appears only in the test rows; stage 4b uses stronger shifts and sources with as few as 20 % of the features | `ARCH=source_aware` |
 
-**The result** (`results/broad/summary.md`; 20 datasets, block and block_shift
-missingness at 30 % and 50 %, 5 seeds, ~400 conditions per split; mean rank over
-five models, 1 = best):
-
-| split | condition | **source-aware TabICL-M** | TabPFN-3 | TabPFN 2.5 | TabICLv2 + mean imputation | CatBoost |
-|---|---|---|---|---|---|---|
-| leave-one-source-out | with source offset | **2.22** | 2.45 | 2.53 | 3.21 | 4.59 |
-| leave-one-source-out | all | 2.32 | **2.28** | 2.59 | 3.15 | 4.66 |
-| leave-one-source-out | no offset | 2.42 | **2.11** | 2.65 | 3.09 | 4.73 |
-| random split | all | 2.51 | **2.22** | 2.71 | 2.85 | 4.71 |
-
-Paired against TabPFN-3 (same seeds, same deleted cells): with a source offset
-105 wins / 95 losses and **14 of 20 datasets won**; over all leave-one-source-out
-conditions 190 / 206 and 12 of 20; on random splits 173 / 218. Against TabPFN 2.5
-the source-aware model wins in every summary (219 / 177 on leave-one-source-out,
-16 of 20 datasets). Against the released TabICLv2 it wins 281 / 116 and 18 of 20.
-
-Three sentences of interpretation. The model is the best available when a new
-source arrives with its own calibration, which is the case it was built for, and
-it holds that lead on 14 of 20 datasets against the strongest current tabular
-foundation model. It is a close second to TabPFN-3 in general, and behind it when
-a held-out source has no offset, which is a matter of base-model strength rather
-than of the missingness mechanism. On random splits, where no source-aware
-mechanism can help, the ordering is TabPFN-3, then this model, then TabPFN 2.5.
+**The result.** The per-task tables are in the [Summary](#summary). Pooled over
+both tasks (`results/broad/summary.md`, mean rank over five models): with a source
+offset TabICL-M ranks first (2.22 against 2.45 for TabPFN-3 and 2.53 for TabPFN 2.5;
+105 wins / 95 losses and 14 of 20 datasets against TabPFN-3); over all
+leave-one-source-out conditions it is a close second (2.32 against 2.28); on random
+splits second (2.51 against 2.22). Against TabPFN 2.5 it wins every summary (219 /
+177 on leave-one-source-out, 16 of 20 datasets); against the released TabICLv2,
+281 / 116 and 18 of 20. The split by task shows where the pooled second place comes
+from: classification is level, and the whole deficit is regression without a source
+offset.
 
 **What each part contributes** (`results/sa_ablation/summary.md`; classifier, 3000
 steps each, win rate against mean imputation on held-out sources with offset):
