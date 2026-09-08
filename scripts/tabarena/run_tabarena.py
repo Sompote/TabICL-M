@@ -55,14 +55,20 @@ def main() -> None:
     )
     leaderboard = context.compare(output_dir=out / "eval")
     leaderboard.to_csv(out / "leaderboard.csv")
+
+    def _md(df):
+        try:
+            return df.to_markdown(index=False)
+        except ImportError:  # tabulate missing
+            return df.to_string(index=False)
+
     try:
         website = context.leaderboard_to_website_format(leaderboard=leaderboard)
-        (out / "leaderboard.md").write_text(website.to_markdown(index=False))
-        print(website.to_markdown(index=False))
+        text = _md(website)
     except Exception as e:  # BeyondArena has no website format
-        (out / "leaderboard.md").write_text(leaderboard.to_markdown())
-        print(leaderboard.to_markdown())
-        print(f"(website format unavailable: {e})")
+        text = _md(leaderboard.reset_index()) + f"\n\n(website format unavailable: {e})"
+    (out / "leaderboard.md").write_text(text)
+    print(text)
 
 
 if __name__ == "__main__":
