@@ -5,7 +5,10 @@ START, END = "<!-- sa-results:start -->", "<!-- sa-results:end -->"
 SOURCES = [("results/sa_eval/summary_vs_baselines.md", "Source-aware checkpoint (10k steps) against the baselines"),
            ("results/sa_ablation/summary.md", "Ablation of each part"),
            ("results/sa_eval_20k/summary_vs_baselines.md", "After 20k steps (stage 4b)"),
-           ("results/broad/summary.md", "20-dataset benchmark against TabPFN 2.5 and TabPFN-3")]
+           ("results/broad/summary.md", "20-dataset benchmark against TabPFN 2.5 and TabPFN-3"),
+           ("results/sa_ablation_reg/summary.md", "Regression ablation of each part"),
+           ("results/regression/summary.md", "Regression against TabPFN-3"),
+           ("results/regression/probes_summary.md", "Regression probes (fine-tuning, soup, scaling)")]
 parts, files = [], []
 for f, title in SOURCES:
     p = os.path.join(REPO, f)

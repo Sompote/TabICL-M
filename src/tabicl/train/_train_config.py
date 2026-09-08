@@ -212,13 +212,17 @@ def build_parser():
         default=None,
         type=str,
         help="If None, train for classification. If 'quantile', train for quantile regression with a "
-        "pinball loss (requires num_quantiles > 0). Other values are not supported.",
+        "pinball loss (requires num_quantiles > 0). If 'bar', train a histogram head over num_buckets "
+        "per-table equal-mass buckets with a log-density loss (as in TabPFN).",
     )
     parser.add_argument(
         "--num_quantiles",
         type=int,
         default=999,
         help="Number of quantiles predicted for regression. Only used when regression_method is set.",
+    )
+    parser.add_argument(
+        "--num_buckets", type=int, default=1000, help="Number of buckets of the bar regression head (regression_method='bar')."
     )
 
     ###########################################################################

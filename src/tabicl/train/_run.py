@@ -179,12 +179,13 @@ class Trainer:
         # Determine the task type. regression_method=None trains for classification;
         # "quantile" trains for quantile regression (max_classes=0) with a pinball loss.
         self.regression = self.config.regression_method is not None
-        if self.regression and self.config.regression_method != "quantile":
+        if self.regression and self.config.regression_method not in ("quantile", "bar"):
             raise NotImplementedError(
                 f"regression_method='{self.config.regression_method}' is not supported. "
-                "Only None (classification) and 'quantile' (pinball regression) are available."
+                "Only None (classification), 'quantile' (pinball regression) and 'bar' (histogram) are available."
             )
-        if self.regression and self.config.num_quantiles <= 0:
+        self.bar = bool(self.regression and self.config.regression_method == "bar")
+        if self.regression and not self.bar and self.config.num_quantiles <= 0:
             raise ValueError("For quantile regression, num_quantiles must be greater than 0.")
 
         # Map the private-style --norm_type to the public model's bias_free_ln flag.
@@ -212,6 +213,8 @@ class Trainer:
         self.model_config = {
             "max_classes": 0 if self.regression else self.config.max_classes,
             "num_quantiles": self.config.num_quantiles,
+            "regression_method": self.config.regression_method or "quantile",
+            "num_buckets": self.config.num_buckets,
             "embed_dim": self.config.embed_dim,
             "col_num_blocks": self.config.col_num_blocks,
             "col_nhead": self.config.col_nhead,
@@ -764,11 +767,16 @@ class Trainer:
                 if self.use_reconstruction:
                     pred, tokens = pred
                 pred_raw = pred
-                alphas = torch.linspace(
-                    0.0, 1.0, self.config.num_quantiles + 2, device=pred.device, dtype=pred.dtype
-                )[1:-1].view(1, 1, -1)
-                errors = y_test.unsqueeze(-1) - pred
-                loss = torch.maximum(alphas * errors, (alphas - 1) * errors).mean()
+                if self.bar:
+                    # (B, test_size, num_buckets) logits; borders from the training targets of each table
+                    borders = self.raw_model.bar_dist.fit_borders(y_train)
+                    loss = self.raw_model.bar_dist.nll(pred, y_test, borders)
+                else:
+                    alphas = torch.linspace(
+                        0.0, 1.0, self.config.num_quantiles + 2, device=pred.device, dtype=pred.dtype
+                    )[1:-1].view(1, 1, -1)
+                    errors = y_test.unsqueeze(-1) - pred
+                    loss = torch.maximum(alphas * errors, (alphas - 1) * errors).mean()
             else:
                 pred = self.model(X_in, y_train, model_d, return_tokens=self.use_reconstruction)
                 if self.use_reconstruction:
@@ -789,7 +797,8 @@ class Trainer:
                     X_in, shift_max=self.config.consistency_shift_max, noise_max=self.config.consistency_noise_max
                 )
                 pred_shift = self.model(X_shift, y_train, model_d)
-                cons_loss = consistency_loss(pred_shift, pred_raw, self.regression)
+                # bar logits are compared like class logits (KL over buckets), quantiles by MSE
+                cons_loss = consistency_loss(pred_shift, pred_raw, self.regression and not self.bar)
                 loss = loss + self.config.consistency_weight * cons_loss
 
         # Scale loss for gradient accumulation and backpropagate
@@ -799,7 +808,7 @@ class Trainer:
         with torch.no_grad():
             micro_results = {}
             if self.regression:
-                micro_results["pinball"] = task_loss.item() / num_micro_batches
+                micro_results["nll" if self.bar else "pinball"] = task_loss.item() / num_micro_batches
             else:
                 micro_results["ce"] = task_loss.item() / num_micro_batches
                 accuracy = (pred.argmax(dim=1) == true).sum() / len(true)
@@ -864,7 +873,7 @@ class Trainer:
         micro_batches = [torch.split(t, self.config.micro_batch_size, dim=0) for t in batch]
         micro_batches = list(zip(*micro_batches))
 
-        results = {"pinball": 0.0} if self.regression else {"ce": 0.0, "accuracy": 0.0}
+        results = {"nll" if self.bar else "pinball": 0.0} if self.regression else {"ce": 0.0, "accuracy": 0.0}
         if self.use_reconstruction:
             results["recon"] = 0.0
         if self.use_consistency:

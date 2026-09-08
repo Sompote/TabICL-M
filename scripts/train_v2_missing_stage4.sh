@@ -72,7 +72,12 @@ if [ "$TASK" = "clf" ]; then
     TASK_ARGS="--max_classes 10 --np_seed 42 --torch_seed 42"
 elif [ "$TASK" = "reg" ]; then
     RELEASED_NAME=tabicl-regressor-v2-20260212.ckpt
-    TASK_ARGS="--regression_method quantile --num_quantiles 999 --norm_type layernorm_nobias --np_seed 43 --torch_seed 43"
+    # HEAD=quantile (released head, default) | HEAD=bar (histogram head with NUM_BUCKETS buckets; output layer starts at zero)
+    if [ "${HEAD:-quantile}" = "bar" ]; then
+        TASK_ARGS="--regression_method bar --num_buckets ${NUM_BUCKETS:-1000} --num_quantiles 999 --norm_type layernorm_nobias --np_seed 43 --torch_seed 43"
+    else
+        TASK_ARGS="--regression_method quantile --num_quantiles 999 --norm_type layernorm_nobias --np_seed 43 --torch_seed 43"
+    fi
 else
     echo "usage: $0 clf|reg"; exit 1
 fi

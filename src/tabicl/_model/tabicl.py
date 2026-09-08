@@ -9,6 +9,7 @@ from .embedding import ColEmbedding
 from .interaction import RowInteraction
 from .learning import ICLearning
 from .quantile_dist import QuantileToDistribution
+from .bar_dist import BarDistribution
 from .kv_cache import TabICLCache
 from .inference_config import InferenceConfig
 
@@ -217,6 +218,8 @@ class TabICL(nn.Module):
         col_group_stats: bool = False,
         row_missing_aware: bool = False,
         pattern_token: bool = False,
+        regression_method: str = "quantile",
+        num_buckets: int = 1000,
     ):
         super().__init__()
         icl_dim = embed_dim * row_num_cls  # CLS tokens are concatenated for ICL
@@ -226,7 +229,17 @@ class TabICL(nn.Module):
             raise ValueError("col_group_stats, row_missing_aware and pattern_token require col_missing_aware=True.")
 
         # Determine task type
-        if max_classes == 0:  # Regression
+        if regression_method not in ("quantile", "bar"):
+            raise ValueError(f"regression_method must be 'quantile' or 'bar', got {regression_method!r}")
+        self.regression_method = regression_method
+        self.num_buckets = num_buckets
+        self._bar_borders: Optional[Tensor] = None
+        if max_classes == 0 and regression_method == "bar":  # Regression with a histogram head
+            if num_buckets < 2:
+                raise ValueError("For bar regression, num_buckets must be at least 2.")
+            out_dim = num_buckets
+            self.bar_dist = BarDistribution(num_buckets)
+        elif max_classes == 0:  # Regression with quantiles
             if num_quantiles <= 0:
                 raise ValueError("For regression (max_classes=0), num_quantiles must be greater than 0.")
             out_dim = num_quantiles
@@ -346,7 +359,22 @@ class TabICL(nn.Module):
         List[str]
             Names of the missing-aware parameters that were not in the checkpoint.
         """
+        state_dict = dict(state_dict)
+        head_reset = []
+        if self.max_classes == 0 and self.regression_method == "bar":
+            # A quantile checkpoint's output layer has num_quantiles rows; the bar head has num_buckets.
+            # Drop the mismatched layer and start the bar head at zero (a uniform histogram).
+            own = self.state_dict()
+            for k in list(state_dict):
+                if k.startswith("icl_predictor.decoder.") and k in own and own[k].shape != state_dict[k].shape:
+                    del state_dict[k]
+                    head_reset.append(k)
+            if head_reset:
+                with torch.no_grad():
+                    self.icl_predictor.decoder[-1].weight.zero_()
+                    self.icl_predictor.decoder[-1].bias.zero_()
         missing, unexpected = self.load_state_dict(state_dict, strict=False)
+        missing = [k for k in missing if k not in head_reset]
         kept = sorted(
             k
             for k in missing
@@ -357,7 +385,7 @@ class TabICL(nn.Module):
             or ".pattern_query" in k
             or ".pattern_attn." in k
             or ".pattern_out." in k
-        )
+        ) + head_reset
         other_missing = sorted(set(missing) - set(kept))
         if unexpected or other_missing:
             raise RuntimeError(
@@ -772,7 +800,9 @@ class TabICL(nn.Module):
 
         raw_quantiles = self._inference_forward(
             X, y_train, embed_with_test=embed_with_test, inference_config=inference_config
-        )  # (B, test_size, num_quantiles)
+        )  # (B, test_size, num_quantiles) or (B, test_size, num_buckets) logits for the bar head
+        if self.regression_method == "bar":
+            return self._bar_stats(raw_quantiles, self.bar_dist.fit_borders(y_train), output_type, alphas)
 
         dist = self.quantile_dist(raw_quantiles)
         raw_quantiles = dist.quantiles  # dist ensures that quantiles are monotonic
@@ -988,6 +1018,28 @@ class TabICL(nn.Module):
 
         return out
 
+    def _bar_stats(self, logits: Tensor, borders: Tensor, output_type, alphas):
+        """Statistics of the bar distribution, same contract as ``predict_stats``."""
+        output_type = [output_type] if isinstance(output_type, str) else output_type
+        d = self.bar_dist
+        results = {}
+        if "mean" in output_type:
+            results["mean"] = d.mean(logits, borders)
+        if "variance" in output_type:
+            results["variance"] = d.variance(logits, borders)
+        if "median" in output_type:
+            results["median"] = d.icdf(logits, borders, 0.5)
+        if "quantiles" in output_type:
+            if alphas is None:
+                alphas = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
+            results["quantiles"] = d.icdf(logits, borders, torch.tensor(alphas, device=logits.device))
+        if "raw_quantiles" in output_type:
+            levels = torch.linspace(0.0, 1.0, self.num_quantiles + 2, device=logits.device)[1:-1]
+            results["raw_quantiles"] = d.icdf(logits, borders, levels)
+        if len(output_type) == 1:
+            return results[output_type[0]]
+        return results
+
     def predict_stats_with_cache(
         self,
         X_train: Optional[Tensor] = None,
@@ -1073,8 +1125,14 @@ class TabICL(nn.Module):
             inference_config=inference_config,
         )
 
+        if self.regression_method == "bar" and store_cache and y_train is not None:
+            self._bar_borders = self.bar_dist.fit_borders(y_train)
         if raw_quantiles is None:
             return None
+        if self.regression_method == "bar":
+            if self._bar_borders is None:
+                raise ValueError("Bar regression with a KV cache needs the borders fitted at store_cache time.")
+            return self._bar_stats(raw_quantiles, self._bar_borders.to(raw_quantiles.device), output_type, alphas)
 
         dist = self.quantile_dist(raw_quantiles)
         raw_quantiles = dist.quantiles

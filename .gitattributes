@@ -1,3 +1,4 @@
 checkpoints/tabicl-m/**/step-3000.ckpt filter=lfs diff=lfs merge=lfs -text
 checkpoints/tabicl-m-sa/**/step-10000.ckpt filter=lfs diff=lfs merge=lfs -text
 checkpoints/tabicl-m-sa-20k/**/step-10000.ckpt filter=lfs diff=lfs merge=lfs -text
+checkpoints/tabicl-m-sa-bar/**/step-20000.ckpt filter=lfs diff=lfs merge=lfs -text
