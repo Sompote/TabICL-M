@@ -261,3 +261,24 @@ def test_regressor_passes_nan_to_missing_aware_model(tmp_path):
     pred = reg.predict(df)
     assert pred.shape == (len(df),)
     assert np.isfinite(pred).all()
+
+
+def test_fitted_missing_aware_estimators_are_picklable(tmp_path):
+    """AutoGluon / TabArena pickle fitted models; the NaN pass-through preprocessing must allow it."""
+    import pickle
+
+    torch.manual_seed(0)
+    m = TabICL(**SMALL, col_missing_aware=True)
+    cfg = dict(SMALL, col_missing_aware=True)
+    p = tmp_path / "aware.ckpt"
+    torch.save({"config": cfg, "state_dict": m.state_dict()}, p)
+    rng = np.random.default_rng(0)
+    X = rng.normal(size=(80, 4))
+    X[rng.random(X.shape) < 0.3] = np.nan
+    df = pd.DataFrame(X, columns=list("abcd"))
+    df["cat"] = rng.choice(["u", "v", None], size=80)
+    y = (X[:, 0] > 0).astype(int)
+    clf = TabICLClassifier(model_path=str(p), device="cpu", n_estimators=2).fit(df, y)
+    assert clf.X_encoder_.impute is False
+    clf2 = pickle.loads(pickle.dumps(clf))
+    np.testing.assert_allclose(clf2.predict_proba(df.iloc[:10]), clf.predict_proba(df.iloc[:10]), atol=1e-6)

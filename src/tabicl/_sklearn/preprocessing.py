@@ -29,6 +29,11 @@ from .sklearn_utils import validate_data, nan_check_params
 _NAN_OK = nan_check_params()
 
 
+
+def _as_float64(Z):
+    """Numeric columns as float64 with NaN kept (used when the model is missing-aware)."""
+    return np.asarray(Z, dtype=np.float64)
+
 class RecursionLimitManager:
     """Context manager to temporarily set the recursion limit.
 
@@ -118,7 +123,7 @@ class TransformToNumerical(TransformerMixin, BaseEstimator):
             cat_tfm = OrdinalEncoder(
                 dtype=np.float64, handle_unknown="use_encoded_value", unknown_value=-1, encoded_missing_value=np.nan
             )
-            num_tfm = FunctionTransformer(lambda Z: np.asarray(Z, dtype=np.float64))
+            num_tfm = FunctionTransformer(_as_float64)  # module-level: fitted estimators must stay picklable
 
         if not hasattr(X, "columns"):  # proxy way to check whether X is a dataframe without importing pandas
             # no dataframe, so we can't do column-wise transformations. Instead, we check if it's already numeric and if not, raise an error.
