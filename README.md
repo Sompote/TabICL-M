@@ -299,6 +299,20 @@ all parts off, new prior only 0.62; the first stage-4 checkpoint 0.62; all parts
 10k steps 0.77. Every part helps, the pattern token and the observed-only rows
 most, the prior alone not at all, and more steps help.
 
+**What each part contributes, regression** (`results/sa_ablation_reg/summary.md`;
+regressor, 3000 steps each, 7 regression datasets, 5 seeds; % = RMSE gain over the
+released TabICLv2 regressor). No part hurts: on complete data every variant sits
+within +0.2 to +1.0 % of the released regressor, so the deficit to TabPFN-3 on plain
+regression is inherited from the base model, not introduced by the source-aware
+parts. Under a held-out source with offset the gains are all parts on +5.1 %,
+without the pattern token +5.3 %, without the objectives +5.1 %, without the
+source-relative values +4.9 %, without observed-only rows +4.8 %, all parts off
+(the new prior alone) +4.5 %, and the full model at 20k steps +8.6 %, the only
+variant ahead of TabPFN-3 there (44 wins / 26 losses). Unlike for the classifier,
+the prior alone already helps the regressor, the parts add about one point on top
+at 3k steps, and training length adds the rest. Without an offset TabPFN-3 leads
+every variant by 9 to 11 %, and the parts make no difference.
+
 **What did not work.** Two test-time options were tried on the trained model and
 are negative results (`results/sa_eval/tt/`): letting the test rows attend in the
 column set transformer is a coin flip (46 wins / 66 losses against the plain
