@@ -152,3 +152,7 @@ checkpoints/
 results/*.log
 catboost_info/
 results/.aware_zero_cache/
+results/tabarena/*/experiments/
+results/tabarena/*/eval/
+results/beyondarena/*/experiments/
+results/beyondarena/*/eval/
