@@ -274,6 +274,39 @@ it too, so it is neither sample efficiency nor capacity: it is base-regressor qu
 smooth functions, inherited from TabICLv2 (its released regressor ranks 6.4 against
 TabPFN-3's 4.0 there).
 
+**Where exactly the regression gap is** (`results/function_class/`,
+`scripts/diag/function_class.py`). Synthetic regression tasks of known function class,
+1 and 8 inputs, 300 / 1 000 / 3 000 training rows, 3 seeds, RMSE / std(y):
+
+| family | TabICLv2 | TabICL-M | TabPFN-3 | gap |
+|---|---|---|---|---|
+| log-linear (exp of a linear form) | 0.093 | 0.095 | 0.042 | +128 % |
+| product of 3 features | 0.048 | 0.052 | 0.024 | +115 % |
+| step functions | 0.085 | 0.094 | 0.084 | +12 % |
+| sine MLP | 0.179 | 0.182 | 0.164 | +11 % |
+| GP, long lengthscale | 0.197 | 0.200 | 0.185 | +8 % |
+| kinematic chain | 0.666 | 0.667 | 0.626 | +6 % |
+| GP, short lengthscale | 0.530 | 0.522 | 0.525 | −1 % |
+| noisy linear | 0.449 | 0.449 | 0.449 | 0 % |
+
+The gap is 1 % with one input and 12 % with eight, and it does not shrink with training
+size (7 / 9 / 8 % at 300 / 1 000 / 3 000 rows): the regressor loses on interactions of
+several features, worst when the target is a product or an exponential of them (the
+diamonds structure). TabICLv2 and TabICL-M are identical on every family, so the
+missingness training did not cause it. Two levers that target this are implemented and
+tested but were not trained (the continuation run was stopped by decision): a
+smooth-target prior component that replaces the target of a fraction of tables by a GP
+sample, smooth MLP, product, log-linear or kinematic function (`--smooth_enabled`,
+`SMOOTH_P` in the training script) and a Huber point loss on the predicted mean next to
+the pinball loss (`--point_loss_weight`, `POINT_LOSS`).
+
+**Neighbour-based context** (`results/regression/large_n_*`, `KNNContextRegressor`,
+`tabicl_aware_knn`). Fitting the regressor on the 4 000 training rows nearest to each
+group of test rows, on kin8nm (5 734 training rows), space_ga and diamonds (14 000),
+is a negative result: 1 win, 11 losses against the full context, +0.5 % RMSE, and
+0 / 3 datasets against TabPFN-3 either way. The full context is not the bottleneck at
+these sizes; the option is useful only beyond TabPFN-3's 50 000-row limit.
+
 **Calibration.** Under a held-out source the TabICL-M regressor's 80 % interval covers
 0.81 at a width of 1.6 target standard deviations; TabICLv2 over-covers at 0.87 with width
 2.1. TabPFN's intervals were not recorded.
@@ -289,13 +322,18 @@ reconstruction head before predicting hurts (29 / 83). Both are implemented
    complete tables. The compaction database with its laboratory groups, held out one
    laboratory at a time, is the intended test and has not been run.
 2. **Plain regression.** TabPFN-3 leads wherever no source offset is involved; the gap is
-   base-regressor quality, and closing it needs a stronger base regressor, not more
-   missingness training.
+   base-regressor quality on products and exponentials of several features (see the
+   function-class diagnostic above), and closing it needs training on such targets. The
+   smooth-target prior and the point loss are implemented for that run; it has not been
+   carried out.
 3. **Significance.** Five seeds give paired win rates of 52–57 % against TabPFN-3 under
    offset: a rank difference, not yet a significant per-dataset margin.
 4. **Public leaderboards.** TabArena's and BeyondArena's datasets are complete, so they
-   cannot show the effect targeted here. A TabArena-Lite run and a BeyondArena
-   grouped-split run through their framework are in progress (`scripts/tabarena/`).
+   cannot show the effect targeted here. On TabArena-Lite (51 tasks, 8-fold bagging,
+   `results/tabarena/lite/leaderboard.md`) TabICL-M scores Elo 1500 (+60 / −48) against
+   TabICLv2 1557 and TabPFN-3 1638: inside the confidence interval of TabICLv2 but below
+   it, as expected for complete data. The BeyondArena grouped-split run is in progress
+   (`scripts/tabarena/`).
 5. **Intervals.** TabPFN's quantiles were not recorded; the interval comparison is open.
 
 ## Repository map

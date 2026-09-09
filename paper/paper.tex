@@ -515,8 +515,17 @@ quantile head on every regression dataset on complete data (9 wins, 26 losses, 7
 higher RMSE). \emph{A sample-efficiency curve} shows the kin8nm gap at every training
 size, narrowing from 13\,\% at 300 rows to 5\,\% at 2\,100, so it is not a limitation of
 in-context learning from little data; and TabPFN~2.5, with 10\,M parameters, beats us
-there too, so it is not capacity. What remains is the quality of the base regressor on
-smooth nonlinear functions, inherited from TabICLv2 (whose released regressor ranks
+there too, so it is not capacity. \emph{A function-class diagnostic} on synthetic
+tasks of known class (GP samples, sine MLP, products, exponentials of a linear form,
+kinematic chains, step functions; 1 and 8 inputs; 300 to 3\,000 rows; three seeds)
+locates the gap: $+128\,\%$ RMSE on exponentials and $+115\,\%$ on products of several
+features, $+6$ to $+12\,\%$ on the other nonlinear families, none on linear targets;
+$+1\,\%$ with one input against $+12\,\%$ with eight; unchanged from 300 to 3\,000 rows.
+TabICLv2 and TabICL-M are identical on every family, so the missingness training is not
+the cause. \emph{A neighbour-based context} (the 4\,000 training rows nearest to each
+group of test rows, as in LoCalPFN and TabDPT) on kin8nm, space\_ga and diamonds at up to
+14\,000 training rows loses to the full context (1 win, 11 losses, $+0.5\,\%$ RMSE).
+What remains is the quality of the base regressor on interactions of several features, inherited from TabICLv2 (whose released regressor ranks
 6.4 against TabPFN-3's 4.0 on these datasets under a held-out source) and not touched by
 missingness training, adaptation on the context, or the output distribution.
 
@@ -549,9 +558,10 @@ complete public tables; the leave-one-laboratory-out test on the compaction data
 that motivated the work has not been run. Five seeds give paired win rates of 52--57\,\%
 under offset against TabPFN-3, a rank difference rather than a significant margin per
 dataset. TabArena and BeyondArena, whose datasets are complete, cannot show the effect
-we target; our TabArena-Lite and BeyondArena grouped-split runs are in progress and
-will be reported in the repository, with the expectation of a TabICLv2-level placement
-on TabArena. Finally, one RTX~5090 and 20\,000 continuation steps are a small budget
+we target; on TabArena-Lite (51 tasks, eight-fold bagging) TabICL-M scores Elo 1500
+($+60/-48$) against 1557 for TabICLv2 and 1638 for TabPFN-3, inside TabICLv2's interval
+but below it, as expected on complete data; the BeyondArena grouped-split run is
+reported in the repository. Finally, one RTX~5090 and 20\,000 continuation steps are a small budget
 against the pre-training of TabPFN-3, and we do not claim to have exhausted what a
 larger one would give the base regressor.
 
