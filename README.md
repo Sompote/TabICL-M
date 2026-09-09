@@ -220,7 +220,7 @@ holds out a whole synthetic source (`--split source`), and compares:
 | `tabicl_indicator`, `tabicl_iterimpute`, `tabicl_knnimpute`, `tabicl_patternnorm` | the base behind an indicator column, IterativeImputer, KNNImputer, or pattern-conditional normalisation |
 | `tabicl_aware_zero` | released weights inside the TabICL-M architecture, new parameters at zero |
 | `tabicl_aware` | a TabICL-M checkpoint (`--aware_ckpt`, `--aware_ckpt_reg`); suffixes `_n32`, `_med`, `_ypow`, `_qn`, `_ewt`, `_si` for test-time variants |
-| `tabpfn`, `tabpfn25`, `tabpfn26`, `tabpfn3` | TabPFN v2 (tabicl==2.2.1 public weights) and the 2.5 / 2.6 / 3 default checkpoints (tabpfn>=8) |
+| `tabpfn`, `tabpfn25`, `tabpfn26`, `tabpfn3` | TabPFN v2 (tabpfn==2.2.1, public weights) and the 2.5 / 2.6 / 3 default checkpoints (tabpfn>=8) |
 | `xgboost`, `catboost` | trees with native NaN handling |
 
 Metrics: AUC, accuracy, log loss; RMSE, R², coverage and width of the 80 % interval.
