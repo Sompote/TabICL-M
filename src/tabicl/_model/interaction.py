@@ -166,6 +166,10 @@ class RowInteraction(nn.Module):
             return key_mask
         # Rows with no observed feature at all keep every key.
         absent = absent & ~absent.all(dim=-1, keepdim=True)
+        if not absent.any():
+            # Complete table: no mask, so attention takes the fused (flash) kernel instead of
+            # materialising a (B, T, heads, H+C, H+C) matrix (29 GB at 380 rows x 1083 features).
+            return key_mask
         absent = F.pad(absent, (self.num_cls, 0), value=False)  # (B, T, C+H)
         return absent if key_mask is None else (key_mask | absent)
 
