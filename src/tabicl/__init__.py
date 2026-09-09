@@ -1,9 +1,10 @@
 from ._model import InferenceConfig
-from ._sklearn import TabICLClassifier, TabICLRegressor
+from ._sklearn import TabICLClassifier, TabICLRegressor, KNNContextRegressor
 
 __all__ = [
     "TabICLClassifier",
     "TabICLRegressor",
+    "KNNContextRegressor",
     "TabICLForecaster",
     "TabICLUnsupervised",
     "FinetunedTabICLClassifier",

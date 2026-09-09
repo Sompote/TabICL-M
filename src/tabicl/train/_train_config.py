@@ -4,6 +4,7 @@ import argparse
 
 from tabicl.prior.graph_lib._config import PriorConfig
 from tabicl.prior._missingness import MissingnessConfig
+from tabicl.prior._smooth_target import SmoothTargetConfig
 
 
 def str2bool(value):
@@ -451,5 +452,14 @@ def build_parser():
     # Block-structured (multi-source) and cell-wise missingness applied to prior tables.
     # Disabled by default. Requires a model that accepts NaN inputs.
     MissingnessConfig.add_args_to_parser(parser)
+    # Smooth-target prior component for regression (GP / smooth MLP / product / log-linear / kinematic targets).
+    SmoothTargetConfig.add_args_to_parser(parser)
+    parser.add_argument(
+        "--point_loss_weight",
+        type=float,
+        default=0.0,
+        help="Regression with the quantile head: weight of a Huber loss on the mean of the predicted quantiles "
+        "(the point prediction) added to the pinball loss. 0 = off.",
+    )
 
     return parser

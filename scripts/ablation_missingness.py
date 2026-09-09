@@ -473,6 +473,21 @@ class ModelZoo:
             else:
                 ckpt = self._plain_ckpt(task)
             est = self._tabicl(task, ckpt, seed, **extra)
+            if "knn" in opts and task == "regression":
+                # neighbour-based context on large tables (plain estimator below --knn_min_rows rows)
+                from tabicl import KNNContextRegressor
+
+                base_kwargs = dict(
+                    model_path=ckpt, n_estimators=self.args.n_estimators, device=self.args.device, random_state=seed
+                )
+                base_kwargs.update(extra)
+                est = KNNContextRegressor(
+                    base_kwargs=base_kwargs,
+                    context_size=self.args.knn_context,
+                    min_rows=self.args.knn_min_rows,
+                    test_group_size=self.args.knn_group,
+                    random_state=seed,
+                )
             if task == "regression":
                 return self._fit_predict_regression(est, X_tr, y_tr, X_te, opts, task, ckpt, seed, extra)
             est.fit(X_tr, y_tr)
@@ -830,9 +845,13 @@ def build_parser() -> argparse.ArgumentParser:
             "tabicl_impute", "tabicl_indicator", "tabicl_patternnorm", "tabicl_iterimpute", "tabicl_knnimpute",
             "tabicl_aware", "tabicl_aware_ewt", "tabicl_aware_si", "tabicl_aware_ewt_si", "tabicl_aware_n32",
             "tabicl_aware_med", "tabicl_aware_ypow", "tabicl_aware_n32_ypow", "tabicl_aware_n32_ypow_qn", "tabicl_aware_zero",
+            "tabicl_aware_knn", "tabicl_aware_n32_knn",
             "xgboost", "catboost", "tabpfn", "tabpfn25", "tabpfn26", "tabpfn3", "tabpfn3_n32",
         ],
     )
+    p.add_argument("--knn_context", type=int, default=2000, help="tabicl_aware_knn: context rows per test group")
+    p.add_argument("--knn_min_rows", type=int, default=2500, help="tabicl_aware_knn: plain estimator at or below this")
+    p.add_argument("--knn_group", type=int, default=256, help="tabicl_aware_knn: test rows per group")
     p.add_argument("--plain_ckpt", default=None, help="Released classifier checkpoint (default: auto-download)")
     p.add_argument("--plain_ckpt_reg", default=None, help="Released regressor checkpoint (default: auto-download)")
     p.add_argument("--aware_ckpt", default=None, help="Missing-aware classifier checkpoint (for tabicl_aware)")

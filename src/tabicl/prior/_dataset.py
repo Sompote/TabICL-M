@@ -45,6 +45,7 @@ from ._hp_sampling import HpSamplerList
 from ._reg2cls import Reg2Cls
 from ._prior_config import DEFAULT_FIXED_HP, DEFAULT_SAMPLED_HP
 from ._missingness import MissingnessConfig, MissingnessTransform
+from ._smooth_target import SmoothTargetConfig, SmoothTargetTransform
 
 warnings.filterwarnings(
     "ignore", message=".*The PyTorch API of nested tensors is in prototype stage.*", category=UserWarning
@@ -1324,6 +1325,11 @@ class PriorDataset(IterableDataset):
     config : PriorConfig | None, default=None
         Prior configuration when using 'graph_scm' prior_type
 
+    smooth_target : SmoothTargetConfig | None, default=None
+        Regression only: replace the target of a fraction of tables by a smooth function
+        of a few features (GP sample, smooth MLP, product, log-linear, kinematic chain).
+        Applied before missingness. Disabled when None or ``smooth_target.enabled`` is False.
+
     missingness : MissingnessConfig | None, default=None
         Configuration of block-structured and cell-wise missingness applied to
         every generated table after generation. Missing cells are written as NaN.
@@ -1361,12 +1367,15 @@ class PriorDataset(IterableDataset):
             scm_sampled_hp: Dict[str, Any] = DEFAULT_SAMPLED_HP,
             config: Optional[PriorConfig] = None,
             missingness: Optional[MissingnessConfig] = None,
+            smooth_target: Optional[SmoothTargetConfig] = None,
             n_jobs: int = -1,
             num_threads_per_generate: int = 1,
             device: str = "cpu",
     ):
         super().__init__()
         self.missingness = MissingnessTransform(missingness)
+        self.smooth_target = SmoothTargetTransform(smooth_target)
+        self.regression = regression
         if prior_type == "dummy":
             self.prior = DummyPrior(
                 regression=regression,
@@ -1486,6 +1495,9 @@ class PriorDataset(IterableDataset):
             Position for train/test split for each dataset of shape (batch_size,).
         """
         X, y, d, seq_lens, train_sizes = self.prior.get_batch(batch_size or self.batch_size)
+        if self.regression and self.smooth_target.enabled:
+            # Before missingness: the smooth function needs complete features.
+            y = self.smooth_target(X, y, d)
         if self.missingness.enabled:
             X, d = self.missingness(X, d, train_sizes)
         return X, y, d, seq_lens, train_sizes

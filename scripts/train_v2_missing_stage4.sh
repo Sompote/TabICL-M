@@ -63,6 +63,17 @@ else
     echo "ARCH must be baseline or source_aware"; exit 1
 fi
 N_JOBS=${N_JOBS:-8}                              # CPU workers generating prior tables
+# Regression extras (item "beat TabPFN-3 on plain regression"): SMOOTH_P = fraction of regression tables whose
+# target is replaced by a smooth function of a few features (GP / smooth MLP / product / log-linear / kinematic);
+# POINT_LOSS = weight of a Huber loss on the point prediction added to the pinball loss. Both 0 = off.
+EXTRA_ARGS="${EXTRA_ARGS:-}"
+if [ -n "${SMOOTH_P:-}" ] && [ "${SMOOTH_P}" != "0" ]; then
+    EXTRA_ARGS="$EXTRA_ARGS --smooth_enabled True --smooth_p_apply $SMOOTH_P --smooth_max_noise ${SMOOTH_MAX_NOISE:-0.1}"
+    [ -n "${SMOOTH_WEIGHTS:-}" ] && EXTRA_ARGS="$EXTRA_ARGS --smooth_weights $SMOOTH_WEIGHTS"
+fi
+if [ -n "${POINT_LOSS:-}" ] && [ "${POINT_LOSS}" != "0" ]; then
+    EXTRA_ARGS="$EXTRA_ARGS --point_loss_weight $POINT_LOSS"
+fi
 CKPT_ROOT=${CKPT_ROOT:-checkpoints/tabicl-m}     # source_aware runs default to checkpoints/tabicl-m-sa
 
 # Released Stage 3 checkpoints (auto-downloaded to the Hugging Face cache by the
@@ -153,7 +164,7 @@ torchrun --standalone --nproc_per_node=$NUM_GPUS -m tabicl.train \
             --recon_weight $RECON_WEIGHT \
             --recon_rate_max 0.3 \
             --recon_p_apply 0.5 \
-            $ARCH_ARGS \
+            $ARCH_ARGS $EXTRA_ARGS \
             --embed_dim 128 \
             --col_num_blocks 3 \
             --col_nhead 8 \

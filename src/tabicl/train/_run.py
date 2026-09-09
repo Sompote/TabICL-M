@@ -28,6 +28,7 @@ from tabicl.prior._dataset import PriorDataset
 from tabicl.prior._genload import LoadPriorDataset, seed_worker
 from tabicl.prior.graph_lib._config import PriorConfig
 from tabicl.prior._missingness import MissingnessConfig
+from tabicl.prior._smooth_target import SmoothTargetConfig
 from tabicl.train._reconstruction import sample_reconstruction_mask, hide_cells
 from tabicl.train._consistency import shift_by_pattern, consistency_loss
 from tabicl.train._optim import get_scheduler
@@ -312,6 +313,7 @@ class Trainer:
                 prior_type=self.config.prior_type,
                 config=PriorConfig.from_args(self.config),  # graph_scm prior options
                 missingness=MissingnessConfig.from_args(self.config),
+                smooth_target=SmoothTargetConfig.from_args(self.config),
                 device=self.config.prior_device,
                 n_jobs=1,  # Set to 1 to avoid nested parallelism; the DataLoader parallelizes across batches
             )
@@ -759,6 +761,7 @@ class Trainer:
             and float(torch.rand(())) < self.config.consistency_p
         )
 
+        point_loss = None
         with self.amp_ctx, self._sdpa_ctx():
             if self.regression:
                 # (B, test_size, num_quantiles) predicted quantiles at levels
@@ -777,6 +780,11 @@ class Trainer:
                     )[1:-1].view(1, 1, -1)
                     errors = y_test.unsqueeze(-1) - pred
                     loss = torch.maximum(alphas * errors, (alphas - 1) * errors).mean()
+                    if self.config.point_loss_weight > 0:
+                        # The pinball loss is flat around the optimum; a Huber loss on the mean of the
+                        # predicted quantiles (the point prediction at inference) targets RMSE directly.
+                        point_loss = F.smooth_l1_loss(pred.mean(dim=-1), y_test)
+                        loss = loss + self.config.point_loss_weight * point_loss
             else:
                 pred = self.model(X_in, y_train, model_d, return_tokens=self.use_reconstruction)
                 if self.use_reconstruction:
@@ -809,6 +817,8 @@ class Trainer:
             micro_results = {}
             if self.regression:
                 micro_results["nll" if self.bar else "pinball"] = task_loss.item() / num_micro_batches
+                if point_loss is not None:
+                    micro_results["point"] = point_loss.item() / num_micro_batches
             else:
                 micro_results["ce"] = task_loss.item() / num_micro_batches
                 accuracy = (pred.argmax(dim=1) == true).sum() / len(true)
@@ -878,6 +888,8 @@ class Trainer:
             results["recon"] = 0.0
         if self.use_consistency:
             results["consistency"] = 0.0
+        if self.regression and not self.bar and self.config.point_loss_weight > 0:
+            results["point"] = 0.0
         failed_batches = 0
 
         for idx, micro_batch in enumerate(micro_batches):

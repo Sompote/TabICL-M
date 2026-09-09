@@ -2,3 +2,4 @@
 
 from .classifier import TabICLClassifier
 from .regressor import TabICLRegressor
+from .knn_context import KNNContextRegressor
