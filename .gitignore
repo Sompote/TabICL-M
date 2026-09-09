@@ -156,3 +156,9 @@ results/tabarena/*/experiments/
 results/tabarena/*/eval/
 results/beyondarena/*/experiments/
 results/beyondarena/*/eval/
+paper/*.aux
+paper/*.log
+paper/*.out
+paper/*.bbl
+paper/*.blg
+paper/build*.log

@@ -23,6 +23,10 @@ the [Summary](#summary),
 [Source-aware TabICL-M](#source-aware-tabicl-m-what-was-done-and-what-it-shows)
 and [What remains](#what-remains).
 
+**Paper.** [paper/paper.pdf](./paper/paper.pdf) (source: `paper/paper.tex`) describes the
+motivation, the headroom study, the architecture and its training, the benchmark against
+TabICLv2, TabPFN 2.5 and TabPFN-3, the ablations and the negative results.
+
 **Workflow in three commands.** Install, run continued pre-training on one GPU,
 evaluate against the baselines:
 
