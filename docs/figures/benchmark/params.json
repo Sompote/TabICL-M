@@ -1,0 +1,10 @@
+{
+ "tabpfn3_clf": 53158145,
+ "tabpfn3_reg": 58279945,
+ "tabpfn25_clf": 10718218,
+ "tabpfn25_reg": 10196761,
+ "tabicl_aware_clf": 27686021,
+ "tabicl_aware_reg": 28678754,
+ "tabicl_impute_clf": 27552258,
+ "tabicl_impute_reg": 28544991
+}

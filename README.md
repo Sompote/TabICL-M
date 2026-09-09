@@ -64,6 +64,30 @@ Regression, 7 datasets:
 | held-out source | no offset | 2.50 | **1.74** | 2.59 | 3.37 | 4.80 | 23 / 47, 2 of 7 |
 | random split | all | 2.79 | **1.79** | 2.75 | 3.00 | 4.67 | 42 / 98, 1 of 7 |
 
+**Rank against inference time and model size.**
+
+![Mean rank on the 20-dataset benchmark against median inference time per fit and against parameter count](./docs/figures/benchmark/rank_vs_time_params.png)
+
+*Mean rank over the five models on all incomplete conditions of the 20-dataset benchmark
+(1 = best, higher on the plot is better); filled markers are the held-out-source split,
+hollow markers the random split. Time is the median wall-clock of one fit plus predict on
+an RTX 5090 with the default 8-member ensemble, pooled over both splits. Parameters are the
+mean of the classifier and regressor checkpoints. Made by
+`scripts/plots/rank_vs_time_params.py` from `results/broad`.*
+
+| model | parameters | median s / fit | mean rank, held-out source | mean rank, random split | mean AUC, held-out source (13 clf datasets) |
+|---|---|---|---|---|---|
+| TabICL-M (ours) | 28.2 M | 0.3 | 2.32 | 2.51 | 0.828 |
+| TabPFN-3 | 55.7 M | 0.8 | 2.28 | 2.22 | 0.826 |
+| TabPFN 2.5 | 10.5 M | 0.4 | 2.59 | 2.71 | 0.826 |
+| TabICLv2 | 28.0 M | 0.2 | 3.15 | 2.85 | 0.820 |
+| CatBoost | — | 0.3 | 4.66 | 4.71 | 0.770 |
+
+TabICL-M is the most accurate model per parameter and per second among the foundation
+models: it matches TabPFN-3 with half the parameters and a third of the inference time,
+and improves on TabICLv2, which it equals in size and speed, by 0.8 rank points on held-out
+sources. TabPFN 2.5 is the smallest model but ranks behind both.
+
 **Reading.** On classification TabICL-M is level with TabPFN-3 everywhere (a touch
 ahead on random splits and under source offset, identical rank overall; the
 differences are 0.002 to 0.005 AUC, inside seed noise). On regression it is clearly
