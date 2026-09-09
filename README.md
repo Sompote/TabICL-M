@@ -77,8 +77,17 @@ under block_shift, carrying its own additive offset and noise on the numeric fea
 one whole source is the test set. **Random split**: every source is in the context.
 About 400 conditions per split; everything reproducible from `results/broad`.
 
-Mean rank over five models (1 = best); paired counts and datasets won are TabICL-M
-against TabPFN-3 on identical splits and deleted cells.
+Mean rank over five models (1 = best) on all 20 datasets; paired counts and datasets won
+are TabICL-M against TabPFN-3 on identical splits and deleted cells.
+
+| split | condition | **TabICL-M** | TabPFN-3 | TabPFN 2.5 | TabICLv2 | CatBoost | vs TabPFN-3 |
+|---|---|---|---|---|---|---|---|
+| held-out source | with offset | **2.22** | 2.45 | 2.53 | 3.21 | 4.59 | **105 / 95, 14 of 20 datasets** |
+| held-out source | all | 2.32 | **2.28** | 2.59 | 3.15 | 4.66 | 190 / 206, 12 of 20 |
+| random split | all | 2.51 | **2.22** | 2.71 | 2.85 | 4.71 | 173 / 218, 9 of 20 |
+
+<details>
+<summary>Per task: classification (13 datasets) and regression (7 datasets)</summary>
 
 Classification, 13 datasets:
 
@@ -98,12 +107,17 @@ Regression, 7 datasets:
 | held-out source | no offset | 2.50 | **1.74** | 2.59 | 3.37 | 4.80 | 23 / 47, 2 of 7 |
 | random split | all | 2.79 | **1.79** | 2.75 | 3.00 | 4.67 | 42 / 98, 1 of 7 |
 
+</details>
+
 **Scored the TabArena way.** The same runs scored with TabArena's evaluator (`bencheval`:
 Elo with 95 % bootstrap CI, rank, win rate, improvability), each (dataset, mechanism, rate)
 a task and each seed a repeat, log loss / RMSE as the error, Elo anchored to TabICLv2 = 1000
 (`scripts/plots/tabarena_style_scores.py`, `results/tabarena_style/`):
 
 ![Elo with 95 % CI against inference time, TabArena style](./results/tabarena_style/elo_vs_time.png)
+
+<details>
+<summary>TabArena-style leaderboard tables (held-out source, random split)</summary>
 
 Held-out source:
 
@@ -125,6 +139,11 @@ Random split:
 | TabICLv2 | 1000 | +512 / −42 | 2.82 | 0.55 | 2.1 | 0.45 | 0.22 |
 | CatBoost | 288 | +162 / −2005 | 4.95 | 0.01 | 15.6 | 0.21 | 0.31 |
 
+</details>
+
+<details>
+<summary>Accuracy against cost: parameters and inference time</summary>
+
 **Accuracy against cost** (`scripts/plots/rank_vs_time_params.py`):
 
 ![Mean rank against median inference time and parameter count](./docs/figures/benchmark/rank_vs_time_params.png)
@@ -136,6 +155,8 @@ Random split:
 | TabPFN 2.5 | 10.5 M | 0.4 | 2.59 | 2.71 | 0.826 |
 | TabICLv2 | 28.0 M | 0.2 | 3.15 | 2.85 | 0.820 |
 | CatBoost | — | 0.3 | 4.66 | 4.71 | 0.770 |
+
+</details>
 
 **Reading.** On classification TabICL-M is level with TabPFN-3 everywhere (differences of
 0.002–0.005 AUC, inside seed noise). On regression it is clearly ahead when a held-out
@@ -214,6 +235,9 @@ options: `python -m tabicl.train --help`.
 mechanism (`mcar`, `mar`, `mnar`, `block`, `block_shift`) at a stated rate, optionally
 holds out a whole synthetic source (`--split source`), and compares:
 
+<details>
+<summary>Model names accepted by the runner</summary>
+
 | model name | what it is |
 |---|---|
 | `tabicl_impute` | released TabICLv2, NaN mean-imputed (the base) |
@@ -222,6 +246,8 @@ holds out a whole synthetic source (`--split source`), and compares:
 | `tabicl_aware` | a TabICL-M checkpoint (`--aware_ckpt`, `--aware_ckpt_reg`); suffixes `_n32`, `_med`, `_ypow`, `_qn`, `_ewt`, `_si` for test-time variants |
 | `tabpfn`, `tabpfn25`, `tabpfn26`, `tabpfn3` | TabPFN v2 (tabpfn==2.2.1, public weights) and the 2.5 / 2.6 / 3 default checkpoints (tabpfn>=8) |
 | `xgboost`, `catboost` | trees with native NaN handling |
+
+</details>
 
 Metrics: AUC, accuracy, log loss; RMSE, R², coverage and width of the 80 % interval.
 Outputs: `results.csv` (one row per fit), `summary.csv`, `summary.md`, plots. A CSV with
@@ -246,6 +272,9 @@ imputation worse than mean imputation on all six datasets, trees far worse, TabP
 **Ablation** (`results/sa_ablation/`, `results/sa_ablation_reg/`; one switch off at a
 time, 3 000 steps each, held-out source with offset):
 
+<details>
+<summary>Ablation table</summary>
+
 | variant | classifier win rate vs mean imputation | regressor RMSE gain vs TabICLv2 |
 |---|---|---|
 | all parts on | 0.73 | +5.1 % |
@@ -255,6 +284,8 @@ time, 3 000 steps each, held-out source with offset):
 | without the two objectives | 0.70 | +5.1 % |
 | all parts off (new prior only) | 0.62 | +4.5 % |
 | all parts on, full training (10k / 20k) | 0.77 | +8.6 % |
+
+</details>
 
 Every part helps the classifier, the pattern token and observed-only rows most, and the
 prior alone adds nothing; for the regressor the prior alone already helps, the parts add
@@ -278,6 +309,9 @@ TabPFN-3's 4.0 there).
 `scripts/diag/function_class.py`). Synthetic regression tasks of known function class,
 1 and 8 inputs, 300 / 1 000 / 3 000 training rows, 3 seeds, RMSE / std(y):
 
+<details>
+<summary>Diagnostic table by function family</summary>
+
 | family | TabICLv2 | TabICL-M | TabPFN-3 | gap |
 |---|---|---|---|---|
 | log-linear (exp of a linear form) | 0.093 | 0.095 | 0.042 | +128 % |
@@ -288,6 +322,8 @@ TabPFN-3's 4.0 there).
 | kinematic chain | 0.666 | 0.667 | 0.626 | +6 % |
 | GP, short lengthscale | 0.530 | 0.522 | 0.525 | −1 % |
 | noisy linear | 0.449 | 0.449 | 0.449 | 0 % |
+
+</details>
 
 The gap is 1 % with one input and 12 % with eight, and it does not shrink with training
 size (7 / 9 / 8 % at 300 / 1 000 / 3 000 rows): the regressor loses on interactions of
