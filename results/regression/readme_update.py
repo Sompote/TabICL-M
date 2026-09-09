@@ -26,7 +26,8 @@ block = (f"{S}\n\n### Regression against TabPFN-3 (auto-generated)\n\n"
          "dataset on complete data (9 wins / 26 losses, 7 % higher RMSE) and on incomplete random splits (50 / 90), "
          "so the objective is not what separates TabPFN-3 from TabICL either. Full tables: `results/regression/summary.md`.\n\n"
          f"{body}\nVerdict (best of ours against TabPFN-3 at its best setting): **{verdict}**.\n\n{E}")
-readme = open(f"{REPO}/README.md").read()
+TARGET = f"{REPO}/docs/results.md"
+readme = open(TARGET).read()
 if S in readme: readme = readme[: readme.index(S)] + block + readme[readme.index(E) + len(E):]
-else: readme = readme.replace("## What remains", block + "\n\n## What remains", 1)
-open(f"{REPO}/README.md", "w").write(readme); print("README regression block written:", verdict)
+else: readme = readme.rstrip() + "\n\n" + block + "\n"
+open(TARGET, "w").write(readme); print("docs/results.md regression block written:", verdict)
