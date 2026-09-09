@@ -421,6 +421,48 @@ model per parameter and per second among the foundation models; TabPFN~2.5 is sm
 extra read-out, TabICL-M has the size and speed of TabICLv2 while being 0.8 rank points
 better on held-out sources.
 
+\subsection{TabArena-style scoring}
+
+TabArena \citep{erickson2025tabarena} scores methods by Elo from pairwise comparisons per
+task, with bootstrap confidence intervals, alongside rank, win rate and improvability. We
+apply its evaluator to the same runs, treating each (dataset, mechanism, rate) as a task
+and each seed as a repeat, with log loss for classification and RMSE for regression as
+the error and Elo anchored to TabICLv2 at 1000 (Figure~\ref{fig:elo},
+Table~\ref{tab:elo}). On held-out sources TabICL-M leads TabPFN-3 by 58 Elo (1325
+against 1267; win rate 0.80 against 0.73; mean reciprocal rank 0.70 against 0.61) at a
+third of its inference time; on random splits TabPFN-3 leads by 38 Elo with confidence
+intervals of several hundred points, a tie. CatBoost trails both splits by more than 400
+Elo.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\linewidth]{figures/elo_vs_time.png}
+\caption{TabArena-style scoring of the benchmark: Elo with 95\,\% bootstrap confidence
+intervals, anchored to TabICLv2 at 1000, against median inference time (fit plus predict,
+one RTX~5090). 100 tasks $\times$ 5 seeds per split. CatBoost's lower interval on the random
+split extends below the axis.}
+\label{fig:elo}
+\end{figure}
+
+\begin{table}[t]
+\centering\small
+\caption{TabArena-style leaderboard of the benchmark (bencheval). Elo anchored to
+TabICLv2 = 1000; improvability is the mean relative distance to the best method per task.}
+\label{tab:elo}
+\begin{tabular}{lcccccc}
+\toprule
+& \multicolumn{3}{c}{held-out source} & \multicolumn{3}{c}{random split}\\
+model & Elo (95\,\% CI) & rank & win rate & Elo (95\,\% CI) & rank & win rate\\
+\midrule
+TabICL-M (ours) & \textbf{1325} ($+65/-45$) & \textbf{1.79} & \textbf{0.80} & 1085 ($+500/-51$) & 2.34 & 0.67\\
+TabPFN-3 & 1267 ($+68/-40$) & 2.07 & 0.73 & \textbf{1122} ($+533/-54$) & \textbf{2.13} & \textbf{0.72}\\
+TabPFN 2.5 & 1114 ($+51/-46$) & 2.86 & 0.54 & 1011 ($+533/-70$) & 2.76 & 0.56\\
+TabICLv2 & 1000 ($+50/-47$) & 3.42 & 0.40 & 1000 ($+512/-42$) & 2.82 & 0.55\\
+CatBoost & 557 ($+87/-175$) & 4.86 & 0.04 & 288 ($+162/-2005$) & 4.95 & 0.01\\
+\bottomrule
+\end{tabular}
+\end{table}
+
 \subsection{Ablation}
 \label{sec:ablation}
 

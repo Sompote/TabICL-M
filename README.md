@@ -92,6 +92,39 @@ models: it matches TabPFN-3 with half the parameters and a third of the inferenc
 and improves on TabICLv2, which it equals in size and speed, by 0.8 rank points on held-out
 sources. TabPFN 2.5 is the smallest model but ranks behind both.
 
+**Scored the TabArena way.** The same runs scored with TabArena's evaluator
+(`bencheval`: Elo with 95 % bootstrap CI, rank, win rate, improvability, mean reciprocal
+rank), with each (dataset, mechanism, rate) as a task and each seed as a repeat, log loss
+for classification and RMSE for regression as the error, and Elo anchored to TabICLv2 = 1000.
+Script: `scripts/plots/tabarena_style_scores.py`; tables in `results/tabarena_style/`.
+
+![Elo with 95 % CI against inference time, TabArena style](./results/tabarena_style/elo_vs_time.png)
+
+Held-out source (100 tasks × 5 seeds):
+
+| model | Elo | 95 % CI | rank | win rate | improvability (%) | MRR | median s / fit |
+|---|---|---|---|---|---|---|---|
+| TabICL-M (ours) | 1325 | +65 / −45 | 1.79 | 0.80 | 2.5 | 0.70 | 0.31 |
+| TabPFN-3 | 1267 | +68 / −40 | 2.07 | 0.73 | 3.0 | 0.61 | 0.79 |
+| TabPFN 2.5 | 1114 | +51 / −46 | 2.86 | 0.54 | 8.3 | 0.41 | 0.44 |
+| TabICLv2 | 1000 | +50 / −47 | 3.42 | 0.40 | 11.8 | 0.35 | 0.23 |
+| CatBoost | 557 | +87 / −175 | 4.86 | 0.04 | 28.8 | 0.21 | 0.29 |
+
+Random split (100 tasks × 5 seeds):
+
+| model | Elo | 95 % CI | rank | win rate | improvability (%) | MRR | median s / fit |
+|---|---|---|---|---|---|---|---|
+| TabPFN-3 | 1122 | +533 / −54 | 2.13 | 0.72 | 1.9 | 0.64 | 0.80 |
+| TabICL-M (ours) | 1085 | +500 / −50 | 2.34 | 0.67 | 1.7 | 0.55 | 0.30 |
+| TabPFN 2.5 | 1011 | +533 / −70 | 2.76 | 0.56 | 2.8 | 0.44 | 0.44 |
+| TabICLv2 | 1000 | +512 / −42 | 2.82 | 0.55 | 2.1 | 0.45 | 0.22 |
+| CatBoost | 288 | +162 / −2005 | 4.95 | 0.01 | 15.6 | 0.21 | 0.31 |
+
+On held-out sources TabICL-M leads TabPFN-3 by 58 Elo (1325 against 1267, win rate 0.80
+against 0.73) at a third of its inference time; on random splits TabPFN-3 leads by 38 Elo
+with confidence intervals of several hundred points, i.e. a tie. CatBoost is far behind on
+both. (Time is fit plus predict; the runner does not separate them.)
+
 **Reading.** On classification TabICL-M is level with TabPFN-3 everywhere (a touch
 ahead on random splits and under source offset, identical rank overall; the
 differences are 0.002 to 0.005 AUC, inside seed noise). On regression it is clearly
