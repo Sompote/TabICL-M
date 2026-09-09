@@ -20,7 +20,11 @@ block = (f"{S}\n\n### Regression against TabPFN-3 (auto-generated)\n\n"
          "of in-context learning. Test-time fine-tuning on the context rows, with TabPFN-3 given the same treatment, "
          "recovers a third of the kin8nm gap and then plateaus; TabPFN-3 gets slightly worse when fine-tuned and its "
          "zero-shot model stays the best on both datasets, so fine-tuning is a shared lever that does not change the "
-         "ordering. Full tables: `results/regression/summary.md`.\n\n"
+         "ordering. Finally the regression head itself was replaced: a TabPFN-style histogram head (1000 "
+         "per-table equal-mass buckets, log-density loss; `regression_method=\"bar\"`, results tagged `_bar`) trained "
+         "for 20k steps from the 20k source-aware regressor is worse than the quantile head on every regression "
+         "dataset on complete data (9 wins / 26 losses, 7 % higher RMSE) and on incomplete random splits (50 / 90), "
+         "so the objective is not what separates TabPFN-3 from TabICL either. Full tables: `results/regression/summary.md`.\n\n"
          f"{body}\nVerdict (best of ours against TabPFN-3 at its best setting): **{verdict}**.\n\n{E}")
 readme = open(f"{REPO}/README.md").read()
 if S in readme: readme = readme[: readme.index(S)] + block + readme[readme.index(E) + len(E):]
