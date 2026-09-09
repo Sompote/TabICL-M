@@ -1,0 +1,47 @@
+{
+  "out": "results/regression/large_n_tabpfn",
+  "datasets": [
+    "openml:189",
+    "openml:507",
+    "openml:42225"
+  ],
+  "target": null,
+  "source_col": null,
+  "task": null,
+  "max_rows": 20000,
+  "test_size": 0.3,
+  "mechanisms": [
+    "block_shift"
+  ],
+  "split": "random",
+  "shift_scale": 0.5,
+  "noise_scale": 0.3,
+  "add_source_col": false,
+  "rates": [
+    0.3
+  ],
+  "seeds": [
+    0,
+    1,
+    2
+  ],
+  "include_complete": true,
+  "models": [
+    "tabpfn3"
+  ],
+  "knn_context": 2000,
+  "knn_min_rows": 2500,
+  "knn_group": 256,
+  "plain_ckpt": null,
+  "plain_ckpt_reg": null,
+  "aware_ckpt": null,
+  "aware_ckpt_reg": null,
+  "n_estimators": 8,
+  "device": "cuda",
+  "loso": false,
+  "natural": false,
+  "min_source_rows": 20,
+  "plot": false,
+  "resummarize": false,
+  "no_isolation": false
+}

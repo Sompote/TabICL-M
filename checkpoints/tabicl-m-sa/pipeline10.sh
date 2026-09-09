@@ -6,6 +6,7 @@
 #   then: analysis, docs, commit, push; finally the BeyondArena grouped run that pipeline9 could not do
 #   (data-foundry was missing) and a second commit/push.
 cd /workspace/TabICL-M; export HF_HOME=/workspace/.hf_home
+source /venv/main/bin/activate   # torchrun/python for the training script
 LOG=checkpoints/tabicl-m-sa/pipeline10.log
 log(){ echo "=== $* $(date -u)" | tee -a $LOG; }
 PY=/venv/main/bin/python; PY25=/venv/tabpfn25/bin/python; PYTA=/venv/tabarena/bin/python
@@ -35,7 +36,7 @@ fi
 
 # ---- 2+3. training: smooth-target prior + point loss, 10k steps from the 20k regressor ----
 attempt=0
-while [ ! -f $NEW ] && [ $attempt -lt 5 ]; do
+while [ -z "${SKIP_TRAIN:-}" ] && [ ! -f $NEW ] && [ $attempt -lt 5 ]; do
     attempt=$((attempt+1)); log "smooth train attempt $attempt"
     RELEASED_CKPT=$SRC SMOOTH_P=0.4 POINT_LOSS=0.2 LR=3e-5 P_APPLY=0.5 P_SHIFT=1.0 P_NOISE=0.8 MAX_SHIFT=1.2 MAX_NOISE=0.5 MIN_OBS_FRAC=0.2 P_CONTIGUOUS=0.9 \
         ARCH=source_aware DTYPE=bfloat16 N_JOBS=8 STEPS=10000 BATCH=32 SAVE_TEMP=500 SAVE_PERM=2500 CKPT_ROOT=$DIR \
@@ -55,7 +56,7 @@ if [ -f $NEW ]; then
             --models tabicl_aware tabicl_aware_n32 --aware_ckpt_reg $NEW --device cuda > results/regression/stagesmooth_$cfg.log 2>&1; log "smooth eval $cfg exit=$?"
     done
 else
-    log "smooth train FAILED after 5 attempts"
+    log "smooth train skipped (SKIP_TRAIN) or FAILED"
 fi
 
 # ---- 4. neighbour-based context at large n (plain vs knn, both regressors, TabPFN-3) ----
