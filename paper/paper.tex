@@ -9,6 +9,7 @@
 \usepackage[colorlinks=true,linkcolor=blue!60!black,citecolor=blue!60!black,urlcolor=blue!60!black]{hyperref}
 \usepackage[round,authoryear]{natbib}
 \usepackage[section]{placeins}
+\renewcommand{\topfraction}{0.95}\renewcommand{\bottomfraction}{0.9}\renewcommand{\textfraction}{0.05}\renewcommand{\floatpagefraction}{0.85}
 \usepackage{caption}
 \captionsetup{font=small,labelfont=bf}
 \setlength{\parskip}{0.35em}
@@ -156,7 +157,7 @@ laboratories that measure differently. Two splits are used: a stratified random 
 and a leave-one-source-out split in which one whole synthetic source is the test set.
 Five seeds, rates 0.3 and 0.5.
 
-\begin{table}[t]
+\begin{table}[!htbp]
 \centering\small
 \caption{The released TabICLv2 (mean imputation) at 50\,\% missingness. Source shift
 costs nothing under a random split and 0.02--0.08 AUC or 1--3 RMSE under a held-out
@@ -195,7 +196,7 @@ the argument for learning the encoding instead of hard-coding it.
 \section{Method}
 \label{sec:method}
 
-\begin{figure}[t]
+\begin{figure}[!htbp]
 \centering
 \includegraphics[width=\linewidth]{figures/architecture.png}
 \caption{The three stages of TabICLv2 with the additions of TabICL-M in green. Every
@@ -302,7 +303,7 @@ labelled cells per feature and one observed feature per row; the target is never
 masked. No real dataset is used for training, and none of the evaluation datasets is
 seen.
 
-\begin{figure}[t]
+\begin{figure}[!htbp]
 \centering
 \includegraphics[width=0.95\linewidth]{figures/mechanism.png}
 \caption{How a complete synthetic table becomes an incomplete one: block masking by
@@ -340,7 +341,7 @@ on identical splits and deleted cells, and the number of datasets on which the
 per-dataset mean is better. Everything is reproducible from the repository
 (\texttt{results/broad}); the datasets are listed in Appendix~\ref{app:data} and the per-dataset numbers in Appendix~\ref{app:perdataset}.
 
-\begin{table}[t]
+\begin{table}[!htbp]
 \centering\small
 \caption{Mean rank over five models (1 = best) on the 20-dataset benchmark; paired
 counts and datasets won are TabICL-M against TabPFN-3.}
@@ -389,7 +390,7 @@ Under a held-out source the regressor is also better calibrated: its 80\,\% inte
 covers 0.81 with a width of 1.6 target standard deviations, where TabICLv2 over-covers
 at 0.87 with width 2.1.
 
-\begin{figure}[t]
+\begin{figure}[!htbp]
 \centering
 \includegraphics[width=\linewidth]{figures/rank_vs_time_params.png}
 \caption{Mean rank on all incomplete conditions of the benchmark against median
@@ -400,6 +401,7 @@ equal in size and speed, by 0.8 rank points on held-out sources.}
 \label{fig:cost}
 \end{figure}
 
+\FloatBarrier
 \subsection{Cost}
 
 Figure~\ref{fig:cost} places accuracy against cost. TabICL-M (28\,M parameters, 0.3\,s
@@ -409,6 +411,7 @@ model per parameter and per second among the foundation models; TabPFN~2.5 is sm
 extra read-out, TabICL-M has the size and speed of TabICLv2 while being 0.8 rank points
 better on held-out sources.
 
+\FloatBarrier
 \subsection{TabArena-style scoring}
 
 TabArena \citep{erickson2025tabarena} scores methods by Elo from pairwise comparisons per
@@ -422,7 +425,7 @@ third of its inference time; on random splits TabPFN-3 leads by 38 Elo with conf
 intervals of several hundred points, a tie. CatBoost trails both splits by more than 400
 Elo.
 
-\begin{figure}[t]
+\begin{figure}[!htbp]
 \centering
 \includegraphics[width=\linewidth]{figures/elo_vs_time.png}
 \caption{TabArena-style scoring of the benchmark: Elo with 95\,\% bootstrap confidence
@@ -432,7 +435,7 @@ split extends below the axis.}
 \label{fig:elo}
 \end{figure}
 
-\begin{table}[t]
+\begin{table}[!htbp]
 \centering\small
 \caption{TabArena-style leaderboard of the benchmark (bencheval). Elo anchored to
 TabICLv2 = 1000; improvability is the mean relative distance to the best method per task.}
@@ -459,7 +462,7 @@ steps on the source-aware prior and evaluates it on the held-out-source-with-off
 condition; for the classifier the metric is the win rate against mean imputation, for
 the regressor the mean RMSE gain over the released regressor.
 
-\begin{table}[t]
+\begin{table}[!htbp]
 \centering\small
 \caption{Ablation on held-out sources with offset. Classifier: win rate against mean
 imputation (4 datasets). Regressor: mean RMSE gain over the released regressor (7
@@ -490,6 +493,7 @@ of TabPFN-3 there. No part hurts either task on complete data (every regression
 variant is within $+0.2$ to $+1.0\,\%$ of the released regressor), so the parts are
 safe to keep on everywhere.
 
+\FloatBarrier
 \subsection{What did not close the regression gap}
 \label{sec:negative}
 
@@ -585,7 +589,7 @@ Twenty public datasets, subsampled to at most 3\,000 rows before the 70/30 split
 rows are the median over seeds and splits. Classification metric AUC (log loss for the
 TabArena-style scoring), regression metric RMSE.
 
-\begin{table}[h]
+\begin{table}[!htbp]
 \centering\small
 \caption{The 20 datasets of the benchmark.}
 \input{tables/datasets.tex}
@@ -598,25 +602,25 @@ TabArena-style scoring), regression metric RMSE.
 Mean over 5 seeds at 50\,\% missingness; AUC for classification (higher is better), RMSE
 for regression (lower is better); best per row in bold.
 
-\begin{table}[h]
+\begin{table}[!htbp]
 \centering\small
 \caption{Held-out source with offset (block\_shift, rate 0.5).}
 \input{tables/per_dataset_loso_shift.tex}
 \end{table}
 
-\begin{table}[h]
+\begin{table}[!htbp]
 \centering\small
 \caption{Held-out source without offset (block, rate 0.5).}
 \input{tables/per_dataset_loso_block.tex}
 \end{table}
 
-\begin{table}[h]
+\begin{table}[!htbp]
 \centering\small
 \caption{Random split with offset (block\_shift, rate 0.5).}
 \input{tables/per_dataset_random_shift.tex}
 \end{table}
 
-\begin{table}[h]
+\begin{table}[!htbp]
 \centering\small
 \caption{Complete data (no deleted cells), random split.}
 \input{tables/per_dataset_complete.tex}
@@ -626,7 +630,7 @@ for regression (lower is better); best per row in bold.
 \section{Training hyperparameters}
 \label{app:hparams}
 
-\begin{table}[h]
+\begin{table}[!htbp]
 \centering\footnotesize
 \caption{The two stages that produced the shipped checkpoints. Both start from the
 previous weights with a fresh cosine schedule (5\,\% warm-up).}
