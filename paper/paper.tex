@@ -8,6 +8,7 @@
 \usepackage{url}
 \usepackage[colorlinks=true,linkcolor=blue!60!black,citecolor=blue!60!black,urlcolor=blue!60!black]{hyperref}
 \usepackage[round,authoryear]{natbib}
+\usepackage[section]{placeins}
 \usepackage{caption}
 \captionsetup{font=small,labelfont=bf}
 \setlength{\parskip}{0.35em}
@@ -23,31 +24,26 @@ King Mongkut's University of Technology Thonburi, Bangkok, Thailand\\
 \maketitle
 
 \begin{abstract}
-Engineering databases are rarely measured by one instrument. They are merged from
-laboratories, sites and campaigns, each of which recorded its own subset of the
-features with its own calibration, so the resulting table has block-structured
-gaps and per-source offsets rather than random holes. Tabular foundation models
-handle missing values cell by cell, either by imputation or by a missingness
-indicator, and we show that on such data this is where they all lose: when the test
-rows come from a source the context has never seen, TabICLv2, TabPFN~2.5, TabPFN-3,
-classical imputers and gradient-boosted trees give up 0.02--0.08 AUC or 1--3 RMSE
-beyond what the gaps themselves cost, and none recovers it. We present TabICL-M, a
-continuation of TabICLv2 built on one observation: in a merged table, rows that share
-a missingness pattern come from the same source, so the pattern is free, label-free
-provenance. TabICL-M encodes each value relative to the statistics of its own
-pattern group, represents each row from its observed features only, and carries a
-pattern token into in-context learning; it is trained with a block-structured
-missingness prior with per-source offsets, a block-reconstruction objective and an
-offset-consistency loss. All additions are zero-initialised, so on complete data the
-model equals TabICLv2 exactly. On 20 datasets with injected block missingness (5
-seeds, held-out-source and random splits) TabICL-M is the best model of any kind
-when a held-out source carries a measurement offset (mean rank 2.22 against 2.45 for
-TabPFN-3; 14 of 20 datasets won), level with TabPFN-3 on classification, and behind it
-only on plain regression, for reasons we trace to the base regressor rather than to
-the method. It reaches this with half the parameters and a third of the inference
-time of TabPFN-3. We report every negative result on the way, including that a
-TabPFN-style histogram head, test-time fine-tuning and continued training do not
-close the plain-regression gap.
+Engineering databases are merged from laboratories, sites and campaigns, each of which
+recorded its own subset of the features with its own calibration; their gaps are
+block-structured and informative about the source, not random. Tabular foundation
+models treat missing values cell by cell, and we show that this is where they all lose:
+when the test rows come from a source the context has never seen, TabICLv2, TabPFN~2.5,
+TabPFN-3, classical imputers and gradient-boosted trees give up 0.02--0.08 AUC or 1--3
+RMSE beyond what the gaps cost, and none recovers it. TabICL-M continues TabICLv2 on
+one observation: rows that share a missingness pattern come from the same source, so the
+pattern is free, label-free provenance. It encodes each value relative to its own
+pattern group, represents each row from its observed features only, carries a pattern
+token into in-context learning, and is trained with a source-structured missingness
+prior, block reconstruction and an offset-consistency loss; every addition is
+zero-initialised, so on complete data it equals TabICLv2. On 20 datasets with injected
+block missingness (5 seeds, held-out-source and random splits) TabICL-M is the best
+model of any kind when a held-out source carries an offset (mean rank 2.22 against 2.45
+for TabPFN-3; 14 of 20 datasets; Elo 1325 against 1267 under TabArena's scoring), level
+with TabPFN-3 on classification, and behind it only on plain regression, at half the
+parameters and a third of the inference time. Every negative result on the way is
+reported, so that the remaining gap is attributed to the base regressor, not to the
+method.
 \end{abstract}
 
 \section{Introduction}
@@ -317,7 +313,7 @@ column.}
 
 \paragraph{Recipe.} Training continues from the released TabICLv2 classifier and
 regressor. Stage 4 runs 10\,000 steps at batch 32 with sequences of 400 to 8\,192 rows
-and up to 100 features, Muon optimiser, cosine schedule, learning rate $5\times
+and up to 100 features, Muon optimiser \citep{jordan2024muon}, cosine schedule, learning rate $5\times
 10^{-5}$, block reconstruction with weight 0.1, offset consistency with weight 0.1 on a
 quarter of the micro-batches. Stage 4b continues for another 10\,000 steps at
 $3\times10^{-5}$ on the stronger source effects given above, because the stage-4
@@ -329,14 +325,6 @@ view of the consistency loss adds about 15\,\%. The classifier's task loss fell 
 loss stayed near 0.005; the regressor's pinball loss stayed near 0.08. The classifier
 has 27.7\,M parameters and the regressor 28.7\,M, against 27.6\,M and 28.5\,M for
 TabICLv2: the additions cost 0.1--0.2\,M.
-
-\paragraph{Engineering notes.} Two details mattered in practice. Under distributed data
-parallel, an out-of-memory micro-batch that was skipped while gradient synchronisation
-was armed left the reducer waiting for a backward pass that never came; gradients are
-now averaged by hand after the micro-batch loop, which makes skipped micro-batches and
-parameters unused in a micro-batch harmless. And the zero-initialised parameters must
-still take part in every backward pass, so the all-false mask is kept in training mode
-and an empty reconstruction loss is written as $0\cdot\sum\theta_{\text{head}}$.
 
 \section{Experiments}
 \label{sec:experiments}
@@ -350,7 +338,7 @@ checkpoints, and CatBoost. All in-context learners use eight ensemble members. W
 the mean rank over the five models (1 = best), paired win/loss counts against TabPFN-3
 on identical splits and deleted cells, and the number of datasets on which the
 per-dataset mean is better. Everything is reproducible from the repository
-(\texttt{results/broad}).
+(\texttt{results/broad}); the datasets are listed in Appendix~\ref{app:data} and the per-dataset numbers in Appendix~\ref{app:perdataset}.
 
 \begin{table}[t]
 \centering\small
@@ -543,12 +531,14 @@ combination be represented at all, are the two parts that matter most for
 classification, and the first-generation checkpoint, which could see \emph{that} a cell
 was missing but not \emph{which source} a row came from, gained nothing.
 
-\paragraph{Cost of a foundation-model comparison.} The comparison against TabPFN-3
-would have been misleading without the paired design, the by-task split and the
-negative results. Pooled over both tasks TabICL-M is a close second to TabPFN-3 (2.32
-against 2.28); split by task it is level on classification and the whole deficit is
-regression without offset; probed further, that deficit is the base regressor's. Each
-of these statements is weaker than the one before, and each is the one that survives.
+\paragraph{What a fair comparison required.} Three design choices decided what could
+be claimed. Pairing every comparison on identical splits and deleted cells turned
+seed-level noise into countable wins and losses. Splitting by task showed that the
+pooled second place behind TabPFN-3 (2.32 against 2.28) is entirely regression without a
+source offset, with classification level. And probing that deficit with every lever we
+could think of (Section~\ref{sec:negative}) placed it in the base regressor rather than in
+the method. Without any one of these the paper would have claimed either too much or the
+wrong thing.
 
 \paragraph{Limitations.} All source structure in the benchmark is synthetic, imposed on
 complete public tables; the leave-one-laboratory-out test on the compaction database
@@ -560,6 +550,14 @@ will be reported in the repository, with the expectation of a TabICLv2-level pla
 on TabArena. Finally, one RTX~5090 and 20\,000 continuation steps are a small budget
 against the pre-training of TabPFN-3, and we do not claim to have exhausted what a
 larger one would give the base regressor.
+
+\paragraph{Reproducibility.} The repository contains the weights (git LFS), the prior, the
+training scripts with every switch used here, the evaluation runner, the raw per-fit
+results of every experiment in this paper (\texttt{results/}), the scripts that produce
+each table and figure from them, and the pipelines that ran the training and evaluation
+unattended. Seeds, splits and deleted cells are deterministic functions of the seed, so
+every paired comparison can be recomputed. The hyperparameters are in
+Appendix~\ref{app:hparams}.
 
 \section{Conclusion}
 
@@ -578,6 +576,101 @@ the code, the benchmark and every negative result are public.
 Holzm\"uller, Ga\"el Varoquaux and Marine Le Morvan, whose released weights, prior and
 training code it builds on.
 
+\appendix
+
+\section{Datasets}
+\label{app:data}
+
+Twenty public datasets, subsampled to at most 3\,000 rows before the 70/30 split; train
+rows are the median over seeds and splits. Classification metric AUC (log loss for the
+TabArena-style scoring), regression metric RMSE.
+
+\begin{table}[h]
+\centering\small
+\caption{The 20 datasets of the benchmark.}
+\input{tables/datasets.tex}
+\end{table}
+\FloatBarrier
+
+\section{Per-dataset results}
+\label{app:perdataset}
+
+Mean over 5 seeds at 50\,\% missingness; AUC for classification (higher is better), RMSE
+for regression (lower is better); best per row in bold.
+
+\begin{table}[h]
+\centering\small
+\caption{Held-out source with offset (block\_shift, rate 0.5).}
+\input{tables/per_dataset_loso_shift.tex}
+\end{table}
+
+\begin{table}[h]
+\centering\small
+\caption{Held-out source without offset (block, rate 0.5).}
+\input{tables/per_dataset_loso_block.tex}
+\end{table}
+
+\begin{table}[h]
+\centering\small
+\caption{Random split with offset (block\_shift, rate 0.5).}
+\input{tables/per_dataset_random_shift.tex}
+\end{table}
+
+\begin{table}[h]
+\centering\small
+\caption{Complete data (no deleted cells), random split.}
+\input{tables/per_dataset_complete.tex}
+\end{table}
+\FloatBarrier
+
+\section{Training hyperparameters}
+\label{app:hparams}
+
+\begin{table}[h]
+\centering\footnotesize
+\caption{The two stages that produced the shipped checkpoints. Both start from the
+previous weights with a fresh cosine schedule (5\,\% warm-up).}
+\begin{tabular}{lcc}
+\toprule
+& stage 4 & stage 4b\\
+\midrule
+steps & 10\,000 & 10\,000\\
+learning rate & $5\times10^{-5}$ & $3\times10^{-5}$\\
+batch (tables) / micro-batch & 32 / 1 & 32 / 1\\
+rows per table & 400--8\,192, log-uniform & 400--8\,192, log-uniform\\
+features per table & 1--100 & 1--100\\
+optimiser & Muon ($\beta_1$ 0.9, wd 0.01, clip 1.0) & same\\
+precision & bfloat16 autocast & bfloat16 autocast\\
+reconstruction & mode mixed, weight 0.1, up to 30\,\% of cells, $p=0.5$ & same\\
+offset consistency & weight 0.1, $p=0.25$, tables $\le 2\,048$ rows & same, shift $\le 1.2\sigma$\\
+\midrule
+prior: tables with gaps & 70\,\% & 70\,\%\\
+prior: block / cell-wise & 90\,\% / 40\,\% & 90\,\% / 40\,\%\\
+prior: sources & 2--8, Dirichlet shares & 2--8\\
+prior: features observed per source & 30--100\,\% & 20--100\,\%\\
+prior: contiguous sources (test-only source) & 75\,\% & 90\,\%\\
+prior: per-source offset & $p=0.8$, up to $0.5\sigma$ & $p=1.0$, up to $1.2\sigma$\\
+prior: per-source noise & $p=0.6$, up to $0.3\sigma$ & $p=0.8$, up to $0.5\sigma$\\
+prior: source-id column & $p=0.5$ & $p=0.5$\\
+\midrule
+hardware, time per task & 1 RTX 5090, 9.5 h & 1 RTX 5090, 9.5 h\\
+\bottomrule
+\end{tabular}
+\end{table}
+\FloatBarrier
+
+\section{Engineering notes}
+\label{app:eng}
+
+Two details mattered in practice. Under distributed data
+parallel, an out-of-memory micro-batch that was skipped while gradient synchronisation
+was armed left the reducer waiting for a backward pass that never came; gradients are
+now averaged by hand after the micro-batch loop, which makes skipped micro-batches and
+parameters unused in a micro-batch harmless. And the zero-initialised parameters must
+still take part in every backward pass, so the all-false mask is kept in training mode
+and an empty reconstruction loss is written as $0\cdot\sum\theta_{\text{head}}$.
+
+\clearpage
 \begin{thebibliography}{99}
 \small
 
@@ -605,6 +698,11 @@ TabPFN: A transformer that solves small tabular classification problems in a sec
 N. Hollmann, S. M\"uller, L. Purucker, A. Krishnakumar, M. K\"orfer, S. B. Hoo, R. T. Schirrmeister, F. Hutter.
 Accurate predictions on small data with a tabular foundation model.
 \emph{Nature}, 637:319--326, 2025.
+
+\bibitem[Jordan et al.(2024)]{jordan2024muon}
+K. Jordan, Y. Jin, V. Boza, J. You, F. Cesista, L. Newhouse, J. Bernstein.
+Muon: An optimizer for hidden layers in neural networks.
+\url{https://kellerjordan.github.io/posts/muon/}, 2024.
 
 \bibitem[Lee et al.(2019)]{lee2019set}
 J. Lee, Y. Lee, J. Kim, A. Kosiorek, S. Choi, Y. W. Teh.
