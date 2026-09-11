@@ -10,7 +10,7 @@ TabICL-MM, for the completed Large regression model.
 |---|---|---|
 | TabICL-M | Original missing-aware model | Classification and regression |
 | TabICL-M-Large | Larger missing-aware model | Regression only |
-| TabICL-Large | Future model trained for ordinary regression | Planned; no trained checkpoint |
+| TabICL-Large | Ordinary-regression continuation of Large | 20k-step run started; not evaluated |
 
 Repository/package identity remains TabICL-M (`tabicl-m`), with compatible
 `tabicl` imports and `TabICLRegressor` / `TabICLClassifier` estimator names.
@@ -84,4 +84,6 @@ tables. Extra capacity and additional training were changed together, so these
 results do not isolate the benefit of model size.
 
 [Full results and protocol](../results/large_regression_20k_eval/report.md).
-Ordinary-regression TabICL-Large training remains future work.
+[Ordinary-regression TabICL-Large continuation](regression_large_ordinary_20k.md)
+has started separately. It retains the source architecture and pretrained weights,
+but disables injected missingness, source shifts, and auxiliary masking/losses.

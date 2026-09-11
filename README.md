@@ -1,9 +1,22 @@
 # TabICL-M / TabICL-M-Large
 
-**M means Missing.** TabICL-M extends [TabICLv2](https://github.com/soda-inria/tabicl)
-for incomplete tabular data. It uses observed features, missingness patterns, and
-source-relative statistics to handle tables combined from different sources.
-Missingness patterns serve as a proxy for source identity; they do not guarantee it.
+**TabICL-M is an ongoing research project exploring foundation models for
+incomplete, multi-source tabular data.** Built on
+[TabICLv2](https://github.com/soda-inria/tabicl), it studies how models can learn
+from missingness patterns and differences between data sources, alongside a
+separate effort to improve ordinary regression. **M means Missing.** Missingness
+patterns are used as a proxy for source identity, not proof of a shared source.
+
+The project is still in development. Early experiments show promise in specific
+settings, but broader benchmarks, independent validation, and further model
+development are needed.
+
+**We are seeking research teams, academic groups, and individual collaborators**
+to help strengthen this work. Contributions in model architecture, synthetic
+data generation, large-scale training, rigorous evaluation, and real-world
+multi-source datasets are especially welcome. To discuss collaboration, please
+[open an issue](https://github.com/Sompote/TabICL-M/issues) describing your research
+interests and how you would like to contribute.
 
 ## Models
 
@@ -11,11 +24,12 @@ Missingness patterns serve as a proxy for source identity; they do not guarantee
 |---|---|---:|---:|---|
 | **TabICL-M** | Classification and regression | 12 | 28.7M (regressor) | Original missing-aware checkpoints |
 | **TabICL-M-Large** | Regression | 18 | 41.5M | Completed 20,000 additional training steps |
-| **TabICL-Large** | Ordinary regression | Planned | — | Planned; not trained |
+| **TabICL-Large** | Ordinary regression | 18 | 41.5M | 20k-step continuation started; not evaluated |
 
-Both existing variants use missing/source-aware training. In the Large recipe,
+TabICL-M and TabICL-M-Large use missing/source-aware training. In the Large recipe,
 **70% of synthetic tables are selected for a missingness transform**, not 70% of
-all cells. Ordinary-regression training is planned separately.
+all cells. A separate [ordinary-regression continuation](docs/regression_large_ordinary_20k.md)
+has started from TabICL-M-Large.
 See [model variants and checkpoints](docs/model_variants.md).
 
 ## Quick start
@@ -43,7 +57,7 @@ repository root; an absolute path to your downloaded `.ckpt` also works.
 **Availability:** `git lfs pull` retrieves the original weights. Large weights
 are currently a local training artifact, not published in this repository;
 you must obtain that checkpoint separately before selecting it. There are no
-ordinary-regression TabICL-Large weights yet.
+released ordinary-regression TabICL-Large weights yet.
 
 ```python
 from tabicl import TabICLRegressor
