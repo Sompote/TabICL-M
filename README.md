@@ -29,22 +29,54 @@ pip install -e .
 
 The distribution is `tabicl-m`; Python imports remain `tabicl`.
 
+### Choose your weights
+
+Set `model_path` to the checkpoint you want. Paths below are relative to the
+repository root; an absolute path to your downloaded `.ckpt` also works.
+
+| Model | Estimator | Checkpoint path |
+|---|---|---|
+| TabICL-M regression | `TabICLRegressor` | `checkpoints/tabicl-m-sa-20k/reg/step-10000.ckpt` |
+| TabICL-M-Large regression | `TabICLRegressor` | `results/large_regression_20k/checkpoints/reg/step-20000.ckpt` |
+| TabICL-M classification | `TabICLClassifier` | `checkpoints/tabicl-m-sa-20k/clf/step-10000.ckpt` |
+
+**Availability:** `git lfs pull` retrieves the original weights. Large weights
+are currently a local training artifact, not published in this repository;
+you must obtain that checkpoint separately before selecting it. There are no
+ordinary-regression TabICL-Large weights yet.
+
 ```python
 from tabicl import TabICLRegressor
 
-model = TabICLRegressor(
-    model_path="checkpoints/tabicl-m-sa-20k/reg/step-10000.ckpt"
-)
+# Switch this path to the Large regression checkpoint to use TabICL-M-Large.
+weights = "checkpoints/tabicl-m-sa-20k/reg/step-10000.ckpt"
+model = TabICLRegressor(model_path=weights)
 model.fit(X_train, y_train)
 predictions = model.predict(X_test)
 ```
 
+For classification, use the classifier weights and estimator:
+
+```python
+from tabicl import TabICLClassifier
+
+model = TabICLClassifier(
+    model_path="checkpoints/tabicl-m-sa-20k/clf/step-10000.ckpt"
+)
+model.fit(X_train, y_train)
+probabilities = model.predict_proba(X_test)
+```
+
 Keep missing values as `NaN`; pass a DataFrame for automatic categorical-column
 detection. Select the checkpoint explicitly: omitting `model_path` uses upstream
-weights. Large and classifier checkpoint paths are listed in the
-[model guide](docs/model_variants.md#checkpoints).
+weights. See the [model guide](docs/model_variants.md#checkpoints) for more details.
 
 ## Latest Large regression results
+
+![TabICL-M-Large RMSE gains against TabICL-M and archived TabPFN-3 across five regression conditions](docs/figures/benchmark/large_regression_comparison.png)
+
+TabArena-inspired comparison layout using **RMSE gains**, not Elo or official
+TabArena scores. Negative values mean Large has higher error.
 
 RMSE change for **TabICL-M-Large**; positive means lower error:
 
