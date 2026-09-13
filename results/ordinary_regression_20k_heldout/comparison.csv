@@ -1,0 +1,7 @@
+reference,mechanism,gain_percent,datasets_won,wins,pairs,coverage80_change
+previous_missing_large,block,-9.88621860196236,1,16,42,-0.009502922515242665
+previous_missing_large,block_shift,-12.977055997195503,0,6,42,0.003500265682236348
+original_tabicl_m,block,-5.71533917037292,1,18,42,0.0039654809158027274
+original_tabicl_m,block_shift,-1.09635909435375,5,30,42,0.035442723445767974
+tabpfn3_archived,block,-16.079684860656887,1,7,42,
+tabpfn3_archived,block_shift,5.134736636021336,7,33,42,

@@ -10,7 +10,7 @@ TabICL-MM, for the completed Large regression model.
 |---|---|---|
 | TabICL-M | Original missing-aware model | Classification and regression |
 | TabICL-M-Large | Larger missing-aware model | Regression only |
-| TabICL-Large | Ordinary-regression continuation of Large | 20k-step run started; not evaluated |
+| TabICL-Large | Ordinary-regression continuation of Large | Completed and evaluated; experimental |
 
 Repository/package identity remains TabICL-M (`tabicl-m`), with compatible
 `tabicl` imports and `TabICLRegressor` / `TabICLClassifier` estimator names.
@@ -25,6 +25,7 @@ Paths are relative to the repository root:
 | TabICL-M | Regression | `checkpoints/tabicl-m-sa-20k/reg/step-10000.ckpt` |
 | TabICL-M | Classification | `checkpoints/tabicl-m-sa-20k/clf/step-10000.ckpt` |
 | TabICL-M-Large | Regression | `results/large_regression_20k/checkpoints/reg/step-20000.ckpt` |
+| TabICL-Large (experimental) | Regression | `results/large_ordinary_regression_20k/checkpoints/reg/step-20000.ckpt` |
 
 The original checkpoints use Git LFS. The Large checkpoint is currently a local
 training artifact, ignored by Git; pushing the documentation alone does not
@@ -85,5 +86,15 @@ results do not isolate the benefit of model size.
 
 [Full results and protocol](../results/large_regression_20k_eval/report.md).
 [Ordinary-regression TabICL-Large continuation](regression_large_ordinary_20k.md)
-has started separately. It retains the source architecture and pretrained weights,
-but disables injected missingness, source shifts, and auxiliary masking/losses.
+completed 20,000 additional steps. It retains the source predictor architecture
+and pretrained weights, but disables injected missingness, source shifts, and
+auxiliary masking/losses, removing the unused reconstruction head. Complete-data
+RMSE was 0.37% higher than its Large starting checkpoint and 2.67% higher than the
+original TabICL-M. Held-out block and block-plus-shift RMSE were respectively
+9.89% and 12.98% higher than the Large starting checkpoint. It is not a replacement
+for the missing-aware model. See the linked recipe for results and comparison limits.
+
+The [residual input encoder experiment](regression_residual_input_experiment.md)
+also completed. Its 0.08% complete-data gain over a matched 2k-step control did not
+meet the advancement threshold. Experimental checkpoints are local, Git-ignored,
+and require the corresponding experimental code; no encoder variant is released.

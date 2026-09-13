@@ -24,12 +24,13 @@ interests and how you would like to contribute.
 |---|---|---:|---:|---|
 | **TabICL-M** | Classification and regression | 12 | 28.7M (regressor) | Original missing-aware checkpoints |
 | **TabICL-M-Large** | Regression | 18 | 41.5M | Completed 20,000 additional training steps |
-| **TabICL-Large** | Ordinary regression | 18 | 41.5M | 20k-step continuation started; not evaluated |
+| **TabICL-Large** | Ordinary regression | 18 | 41.5M | 20k steps completed and evaluated; experimental |
 
 TabICL-M and TabICL-M-Large use missing/source-aware training. In the Large recipe,
 **70% of synthetic tables are selected for a missingness transform**, not 70% of
 all cells. A separate [ordinary-regression continuation](docs/regression_large_ordinary_20k.md)
-has started from TabICL-M-Large.
+and a [residual encoder experiment](docs/regression_residual_input_experiment.md)
+are complete. Neither justified replacing the existing checkpoints.
 See [model variants and checkpoints](docs/model_variants.md).
 
 ## Quick start
@@ -52,6 +53,7 @@ repository root; an absolute path to your downloaded `.ckpt` also works.
 |---|---|---|
 | TabICL-M regression | `TabICLRegressor` | `checkpoints/tabicl-m-sa-20k/reg/step-10000.ckpt` |
 | TabICL-M-Large regression | `TabICLRegressor` | `results/large_regression_20k/checkpoints/reg/step-20000.ckpt` |
+| TabICL-Large regression (experimental) | `TabICLRegressor` | `results/large_ordinary_regression_20k/checkpoints/reg/step-20000.ckpt` |
 | TabICL-M classification | `TabICLClassifier` | `checkpoints/tabicl-m-sa-20k/clf/step-10000.ckpt` |
 
 **Availability:** `git lfs pull` retrieves the original weights. Large weights
@@ -85,7 +87,7 @@ Keep missing values as `NaN`; pass a DataFrame for automatic categorical-column
 detection. Select the checkpoint explicitly: omitting `model_path` uses upstream
 weights. See the [model guide](docs/model_variants.md#checkpoints) for more details.
 
-## Latest Large regression results
+## Missing-aware Large benchmark
 
 ![TabICL-M-Large RMSE gains against TabICL-M and archived TabPFN-3 across five regression conditions](docs/figures/benchmark/large_regression_comparison.png)
 
@@ -105,6 +107,27 @@ Gains are averaged equally across datasets. TabPFN-3 scores are archived results
 under matching recorded protocols, not a fresh rerun. Large improved most on
 held-out sources with measurement shifts; it did **not** beat TabPFN-3 overall.
 [Full evaluation and limitations](results/large_regression_20k_eval/report.md).
+
+## Latest experiments — completed September 13, 2026
+
+RMSE gains below are relative to each row's reference; **positive means lower error**.
+
+| Experiment | Reference | Complete data | Held-out block | Held-out block + shift |
+|---|---|---:|---:|---:|
+| Ordinary regression, 20k steps | TabICL-M-Large | −0.37% | −9.89% | −12.98% |
+| Residual input encoder, 2k steps | Unchanged model trained for the same 2k steps | +0.08% | −0.46% | +0.59% |
+
+Ordinary training did not improve overall complete-data RMSE and reduced source
+robustness. The encoder's gains fell below the agreed 1% complete-data threshold;
+no further training or checkpoint promotion followed. These remain development
+experiments on seven datasets and three evaluation seeds, with one training seed.
+
+The ordinary complete-data comparison uses fresh CPU scores; its held-out comparisons
+reuse previous GPU reference scores, so device/precision differences are a limitation.
+Both encoder arms were evaluated freshly on GPU.
+[Complete-data results](results/ordinary_regression_20k_eval/report.md) ·
+[Held-out-source results](results/ordinary_regression_20k_heldout/report.md) ·
+[Encoder results](results/residual_input_experiment/report.md).
 
 ## Documentation
 
